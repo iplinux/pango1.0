@@ -1,0 +1,5 @@
+debian/tmp/usr/include/*
+debian/tmp/usr/lib/lib*.{so,la,a}
+debian/tmp/usr/lib/pkgconfig/*.pc
+debian/tmp/usr/lib/pango/*/modules/*.{la,a}
+debian/tmp/usr/bin/*

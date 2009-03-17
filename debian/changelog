@@ -1,0 +1,5 @@
+pango1.0 (1.23.0-20090316-1) asimov; urgency=low
+
+  * First build for IPlinux
+
+ -- Alexander Kerner <lunohod@openinkpot.org>  Mon, 16 Mar 2009 23:26:39 +0000

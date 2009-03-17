@@ -1,0 +1,40 @@
+diff --git a/Makefile.am b/Makefile.am
+index 65464bc..876f3cc 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -1,6 +1,6 @@
+ ## Process this file with automake to create Makefile.in.
+ 
+-SUBDIRS= pango modules pango-view examples docs tools tests
++SUBDIRS= pango modules pango-view examples tools tests
+ 
+ EXTRA_DIST = 			\
+ 	autogen.sh		\
+@@ -72,5 +72,3 @@ endif
+ if HAVE_WIN32
+ pkgconfig_DATA += pangowin32.pc
+ endif
+-
+-DISTCHECK_CONFIGURE_FLAGS = --enable-gtk-doc --enable-man --disable-doc-cross-references
+diff --git a/configure.in b/configure.in
+index b02bbe5..af2fa9a 100644
+--- a/configure.in
++++ b/configure.in
+@@ -624,8 +624,6 @@ if $have_cairo ; then : ; else
+    fi
+ fi
+ 
+-GTK_DOC_CHECK([1.0])
+-
+ AC_ARG_ENABLE(man,
+               AC_HELP_STRING([--enable-man],
+                              [regenerate man pages from Docbook @<:@default=no@:>@]),
+@@ -980,8 +978,6 @@ modules/syriac/Makefile
+ modules/thai/Makefile
+ modules/tibetan/Makefile
+ examples/Makefile
+-docs/Makefile
+-docs/version.xml
+ tools/Makefile
+ tests/Makefile
+ pango.pc
