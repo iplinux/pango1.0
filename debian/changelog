@@ -1,3 +1,16 @@
+pango1.0 (1.26.2-1) zelazny; urgency=low
+
+  * New upstream release.
+    - Update patches
+    - Disable C++ header check due to broken configure snippet
+    - Forced use of bundled glib-mkenums
+  * Rename pango1.0 package into pango1.0-0
+  * Remove pango1.0-common package
+  * Add pre-generated modules list
+  * Small packaging cleanups
+
+ -- Mikhail Gusarov <dottedmag@dottedmag.net>  Sat, 16 Jan 2010 13:59:24 +0600
+
 pango1.0 (1.23.0-20090316-1+b1) asimov; urgency=low
 
   * Rebuild with new toolchain.
