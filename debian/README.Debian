@@ -1,0 +1,5 @@
+
+** Warning: do not forget to update libpango1.0-0.modules! It can't be generated
+   during cross-compilation, and hence stored in source package as is.
+
+ -- Mikhail Gusarov <dottedmag@dottedmag.net>, Sat, 16 Jan 2010 15:38:23 +0600
