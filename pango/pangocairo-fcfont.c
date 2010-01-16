@@ -166,7 +166,7 @@ get_font_size (const FcPattern *pattern)
   double dpi;
 
   if (FcPatternGetDouble (pattern, FC_PIXEL_SIZE, 0, &size) == FcResultMatch)
-    return size * PANGO_SCALE;
+    return size;
 
   /* Just in case FC_PIXEL_SIZE got unset between pango_fc_make_pattern()
    * and here.  That would be very weird.
@@ -223,6 +223,7 @@ _pango_cairo_fc_font_new (PangoCairoFcFontMap *cffontmap,
 
   cffont = g_object_new (PANGO_TYPE_CAIRO_FC_FONT,
 			 "pattern", pattern,
+			 "fontmap", cffontmap,
 			 NULL);
 
   size = get_font_size (pattern) /
@@ -239,8 +240,7 @@ _pango_cairo_fc_font_new (PangoCairoFcFontMap *cffontmap,
 		     fc_matrix.yy,
 		     0., 0.);
 
-  cairo_matrix_scale (&font_matrix,
-		      size / PANGO_SCALE, size / PANGO_SCALE);
+  cairo_matrix_scale (&font_matrix, size, size);
 
   _pango_cairo_font_private_initialize (&cffont->cf_priv,
 					(PangoCairoFont *) cffont,

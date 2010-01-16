@@ -23,19 +23,14 @@
 
 #include "pango-ot-private.h"
 #include "pango-impl-utils.h"
-#include FT_MODULE_H
+#include FT_TRUETYPE_TABLES_H
 
 static void pango_ot_info_class_init (GObjectClass *object_class);
 static void pango_ot_info_finalize   (GObject *object);
 
-static GObjectClass *parent_class;
+static void synthesize_class_def (PangoOTInfo *info);
 
-enum
-{
-  INFO_LOADED_GDEF = 1 << 0,
-  INFO_LOADED_GSUB = 1 << 1,
-  INFO_LOADED_GPOS = 1 << 2
-};
+static GObjectClass *parent_class;
 
 GType
 pango_ot_info_get_type (void)
@@ -79,21 +74,8 @@ pango_ot_info_finalize (GObject *object)
 {
   PangoOTInfo *info = PANGO_OT_INFO (object);
 
-  if (info->gdef)
-    {
-      HB_Done_GDEF_Table (info->gdef);
-      info->gdef = NULL;
-    }
-  if (info->gsub)
-    {
-      HB_Done_GSUB_Table (info->gsub);
-      info->gsub = NULL;
-    }
-  if (info->gpos)
-    {
-      HB_Done_GPOS_Table (info->gpos);
-      info->gpos = NULL;
-    }
+  if (info->hb_face)
+    hb_face_destroy (info->hb_face);
 
   parent_class->finalize (object);
 }
@@ -107,6 +89,32 @@ pango_ot_info_finalizer (void *object)
   info->face = NULL;
   g_object_unref (info);
 }
+
+static hb_blob_t *
+_get_table  (hb_tag_t tag, void *user_data)
+{
+  PangoOTInfo *info = (PangoOTInfo *) user_data;
+  FT_Byte *buffer;
+  FT_ULong  length = 0;
+  FT_Error error;
+
+  error = FT_Load_Sfnt_Table (info->face, tag, 0, NULL, &length);
+  if (error)
+    return hb_blob_create_empty ();
+
+  buffer = g_malloc (length);
+  if (buffer == NULL)
+    return hb_blob_create_empty ();
+
+  error = FT_Load_Sfnt_Table (info->face, tag, 0, buffer, &length);
+  if (error)
+    return hb_blob_create_empty ();
+
+  return hb_blob_create ((const char *) buffer, length,
+			 HB_MEMORY_MODE_WRITABLE,
+			 g_free, buffer);
+}
+
 
 /**
  * pango_ot_info_get:
@@ -124,32 +132,53 @@ pango_ot_info_get (FT_Face face)
 {
   PangoOTInfo *info;
 
-  if (face->generic.data)
+  if (G_LIKELY (face->generic.data && face->generic.finalizer == pango_ot_info_finalizer))
     return face->generic.data;
   else
     {
+      if (face->generic.finalizer)
+        face->generic.finalizer (face->generic.data);
+
       info = face->generic.data = g_object_new (PANGO_TYPE_OT_INFO, NULL);
       face->generic.finalizer = pango_ot_info_finalizer;
 
       info->face = face;
+
+      if (face->stream->base != NULL) {
+	hb_blob_t *blob;
+
+	blob = hb_blob_create ((const char *) face->stream->base,
+			       (unsigned int) face->stream->size,
+			       HB_MEMORY_MODE_READONLY_MAY_MAKE_WRITABLE,
+			       NULL, NULL);
+	info->hb_face = hb_face_create_for_data (blob, face->face_index);
+	hb_blob_destroy (blob);
+      } else {
+	info->hb_face = hb_face_create_for_tables (_get_table, NULL, info);
+      }
+
+
+      hb_face_set_unicode_funcs (info->hb_face, hb_glib_get_unicode_funcs ());
+
+      /* XXX this is such a waste if not SFNT */
+      if (!hb_ot_layout_has_font_glyph_classes (info->hb_face))
+	synthesize_class_def (info);
     }
 
   return info;
 }
 
-/* There must be be a better way to do this
- */
-static gboolean
-is_truetype (FT_Face face)
+hb_face_t *
+_pango_ot_info_get_hb_face (PangoOTInfo *info)
 {
-  return FT_IS_SFNT(face);
+  return info->hb_face;
 }
 
 typedef struct _GlyphInfo GlyphInfo;
 
 struct _GlyphInfo {
-  HB_UShort glyph;
-  HB_UShort class;
+  unsigned short glyph;
+  unsigned short class;
 };
 
 static int
@@ -167,8 +196,8 @@ compare_glyph_info (gconstpointer a,
  * a character code that maps to the glyph
  */
 static gboolean
-get_glyph_class (gunichar   charcode,
-		 HB_UShort *class)
+get_glyph_class (gunichar        charcode,
+		 unsigned short *class)
 {
   /* For characters mapped into the Arabic Presentation forms, using properties
    * derived as we apply GSUB substitutions will be more reliable
@@ -202,8 +231,8 @@ set_unicode_charmap (FT_Face face)
   for (charmap = 0; charmap < face->num_charmaps; charmap++)
     if (face->charmaps[charmap]->encoding == ft_encoding_unicode)
       {
-	HB_Error error = FT_Set_Charmap(face, face->charmaps[charmap]);
-	return error == HB_Err_Ok;
+	FT_Error error = FT_Set_Charmap(face, face->charmaps[charmap]);
+	return error == FT_Err_Ok;
       }
 
   return FALSE;
@@ -217,10 +246,10 @@ static void
 synthesize_class_def (PangoOTInfo *info)
 {
   GArray *glyph_infos;
-  HB_UShort *glyph_indices;
-  HB_UShort *classes;
-  HB_UInt charcode;
-  HB_UInt glyph;
+  hb_codepoint_t *glyph_indices;
+  unsigned char *classes;
+  gunichar charcode;
+  FT_UInt glyph;
   unsigned int i, j;
   FT_CharMap old_charmap;
 
@@ -254,8 +283,8 @@ synthesize_class_def (PangoOTInfo *info)
    */
   g_array_sort (glyph_infos, compare_glyph_info);
 
-  glyph_indices = g_new (HB_UShort, glyph_infos->len);
-  classes = g_new (HB_UShort, glyph_infos->len);
+  glyph_indices = g_new (hb_codepoint_t, glyph_infos->len);
+  classes = g_new (unsigned char, glyph_infos->len);
 
   for (i = 0, j = 0; i < glyph_infos->len; i++)
     {
@@ -272,8 +301,8 @@ synthesize_class_def (PangoOTInfo *info)
 
   g_array_free (glyph_infos, TRUE);
 
-  HB_GDEF_Build_ClassDefinition (info->gdef, info->face->num_glyphs, j,
-				 glyph_indices, classes);
+  hb_ot_layout_build_glyph_classes (info->hb_face, info->face->num_glyphs,
+				    glyph_indices, classes, j);
 
   g_free (glyph_indices);
   g_free (classes);
@@ -282,119 +311,14 @@ synthesize_class_def (PangoOTInfo *info)
     FT_Set_Charmap (info->face, old_charmap);
 }
 
-HB_GDEF
-pango_ot_info_get_gdef (PangoOTInfo *info)
+static hb_tag_t
+get_hb_table_type (PangoOTTableType table_type)
 {
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (!(info->loaded & INFO_LOADED_GDEF))
-    {
-      HB_Error error;
-
-      info->loaded |= INFO_LOADED_GDEF;
-
-      if (is_truetype (info->face))
-	{
-	  error = HB_Load_GDEF_Table (info->face, &info->gdef);
-
-	  if (error && error != HB_Err_Not_Covered)
-	    g_warning ("Error loading GDEF table 0x%04X", error);
-
-	  if (!info->gdef)
-	    error = HB_New_GDEF_Table (&info->gdef);
-
-	  if (info->gdef && !info->gdef->GlyphClassDef.loaded)
-	    synthesize_class_def (info);
-	}
-    }
-
-  return info->gdef;
-}
-
-HB_GSUB
-pango_ot_info_get_gsub (PangoOTInfo *info)
-{
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (!(info->loaded & INFO_LOADED_GSUB))
-    {
-      HB_Error error;
-      HB_GDEF gdef = pango_ot_info_get_gdef (info);
-
-      info->loaded |= INFO_LOADED_GSUB;
-
-      if (is_truetype (info->face))
-	{
-	  error = HB_Load_GSUB_Table (info->face, &info->gsub, gdef);
-
-	  if (error && error != HB_Err_Not_Covered)
-	    g_warning ("Error loading GSUB table 0x%04X", error);
-	}
-    }
-
-  return info->gsub;
-}
-
-HB_GPOS
-pango_ot_info_get_gpos (PangoOTInfo *info)
-{
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (!(info->loaded & INFO_LOADED_GPOS))
-    {
-      HB_Error error;
-      HB_GDEF gdef = pango_ot_info_get_gdef (info);
-
-      info->loaded |= INFO_LOADED_GPOS;
-
-      if (is_truetype (info->face))
-	{
-	  error = HB_Load_GPOS_Table (info->face, &info->gpos, gdef);
-
-	  if (error && error != HB_Err_Not_Covered)
-	    g_warning ("Error loading GPOS table 0x%04X", error);
-	}
-    }
-
-  return info->gpos;
-}
-
-static gboolean
-get_tables (PangoOTInfo      *info,
-	    PangoOTTableType  table_type,
-	    HB_ScriptList  **script_list,
-	    HB_FeatureList **feature_list)
-{
-  if (table_type == PANGO_OT_TABLE_GSUB)
-    {
-      HB_GSUB gsub = pango_ot_info_get_gsub (info);
-
-      if (!gsub)
-	return FALSE;
-      else
-	{
-	  if (script_list)
-	    *script_list = &gsub->ScriptList;
-	  if (feature_list)
-	    *feature_list = &gsub->FeatureList;
-	  return TRUE;
-	}
-    }
-  else
-    {
-      HB_GPOS gpos = pango_ot_info_get_gpos (info);
-
-      if (!gpos)
-	return FALSE;
-      else
-	{
-	  if (script_list)
-	    *script_list = &gpos->ScriptList;
-	  if (feature_list)
-	    *feature_list = &gpos->FeatureList;
-	  return TRUE;
-	}
-    }
+  switch (table_type) {
+    case PANGO_OT_TABLE_GSUB: return HB_OT_TAG_GSUB;
+    case PANGO_OT_TABLE_GPOS: return HB_OT_TAG_GPOS;
+    default:                  return HB_TAG_NONE;
+  }
 }
 
 /**
@@ -422,57 +346,11 @@ pango_ot_info_find_script (PangoOTInfo      *info,
 			   PangoOTTag        script_tag,
 			   guint            *script_index)
 {
-  HB_ScriptList *script_list;
-  int i;
+  hb_tag_t tt = get_hb_table_type (table_type);
 
-  if (script_index)
-    *script_index = PANGO_OT_NO_SCRIPT;
-
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), FALSE);
-
-  if (!get_tables (info, table_type, &script_list, NULL))
-    return FALSE;
-
-  for (i=0; i < script_list->ScriptCount; i++)
-    {
-      if (script_list->ScriptRecord[i].ScriptTag == script_tag)
-	{
-	  if (script_index)
-	    *script_index = i;
-
-	  return TRUE;
-	}
-    }
-
-  /* try finding 'DFLT' */
-  script_tag = PANGO_OT_TAG_DEFAULT_SCRIPT;
-
-  for (i=0; i < script_list->ScriptCount; i++)
-    {
-      if (script_list->ScriptRecord[i].ScriptTag == script_tag)
-	{
-	  if (script_index)
-	    *script_index = i;
-
-	  return FALSE;
-	}
-    }
-
-  /* try with 'dflt'; MS site has had typos and many fonts use it now :( */
-  script_tag = PANGO_OT_TAG_MAKE ('d', 'f', 'l', 't');
-
-  for (i=0; i < script_list->ScriptCount; i++)
-    {
-      if (script_list->ScriptRecord[i].ScriptTag == script_tag)
-	{
-	  if (script_index)
-	    *script_index = i;
-
-	  return FALSE;
-	}
-    }
-
-  return FALSE;
+  return hb_ot_layout_table_find_script (info->hb_face, tt,
+					 script_tag,
+					 script_index);
 }
 
 /**
@@ -504,60 +382,22 @@ pango_ot_info_find_language (PangoOTInfo      *info,
 			     guint            *language_index,
 			     guint            *required_feature_index)
 {
-  HB_ScriptList *script_list;
-  HB_ScriptTable *script;
-  int i;
+  gboolean ret;
+  unsigned l_index;
+  hb_tag_t tt = get_hb_table_type (table_type);
 
-  if (language_index)
-    *language_index = PANGO_OT_DEFAULT_LANGUAGE;
-  if (required_feature_index)
-    *required_feature_index = PANGO_OT_NO_FEATURE;
+  ret = hb_ot_layout_script_find_language (info->hb_face, tt,
+					   script_index,
+					   language_tag,
+					   &l_index);
+  if (language_index) *language_index = l_index;
 
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), FALSE);
+  hb_ot_layout_language_get_required_feature_index (info->hb_face, tt,
+						    script_index,
+						    l_index,
+						    required_feature_index);
 
-  if (script_index == PANGO_OT_NO_SCRIPT)
-    return FALSE;
-
-  if (!get_tables (info, table_type, &script_list, NULL))
-    return FALSE;
-
-  g_return_val_if_fail (script_index < script_list->ScriptCount, FALSE);
-  script = &script_list->ScriptRecord[script_index].Script;
-
-  for (i = 0; i < script->LangSysCount; i++)
-    {
-      if (script->LangSysRecord[i].LangSysTag == language_tag)
-	{
-	  if (language_index)
-	    *language_index = i;
-	  if (required_feature_index)
-	    *required_feature_index = script->LangSysRecord[i].LangSys.ReqFeatureIndex;
-	  return TRUE;
-	}
-    }
-
-  /* try with 'dflt'; MS site has had typos and many fonts use it now :( */
-  language_tag = PANGO_OT_TAG_MAKE ('d', 'f', 'l', 't');
-
-  for (i = 0; i < script->LangSysCount; i++)
-    {
-      if (script->LangSysRecord[i].LangSysTag == language_tag)
-	{
-	  if (language_index)
-	    *language_index = i;
-	  if (required_feature_index)
-	    *required_feature_index = script->LangSysRecord[i].LangSys.ReqFeatureIndex;
-	  return FALSE;
-	}
-    }
-
-  /* DefaultLangSys */
-  if (language_index)
-    *language_index = PANGO_OT_DEFAULT_LANGUAGE;
-  if (required_feature_index)
-    *required_feature_index = script->DefaultLangSys.ReqFeatureIndex;
-
-  return FALSE;
+  return ret;
 }
 
 /**
@@ -590,50 +430,13 @@ pango_ot_info_find_feature  (PangoOTInfo      *info,
 			     guint             language_index,
 			     guint            *feature_index)
 {
-  HB_ScriptList *script_list;
-  HB_FeatureList *feature_list;
-  HB_ScriptTable *script;
-  HB_LangSys *lang_sys;
+  hb_tag_t tt = get_hb_table_type (table_type);
 
-  int i;
-
-  if (feature_index)
-    *feature_index = PANGO_OT_NO_FEATURE;
-
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), FALSE);
-
-  if (script_index == PANGO_OT_NO_SCRIPT)
-    return FALSE;
-
-  if (!get_tables (info, table_type, &script_list, &feature_list))
-    return FALSE;
-
-  g_return_val_if_fail (script_index < script_list->ScriptCount, FALSE);
-  script = &script_list->ScriptRecord[script_index].Script;
-
-  if (language_index == PANGO_OT_DEFAULT_LANGUAGE)
-    lang_sys = &script->DefaultLangSys;
-  else
-    {
-      g_return_val_if_fail (language_index < script->LangSysCount, FALSE);
-      lang_sys = &script->LangSysRecord[language_index].LangSys;
-    }
-
-  for (i = 0; i < lang_sys->FeatureCount; i++)
-    {
-      HB_UShort index = lang_sys->FeatureIndex[i];
-
-      if (index < feature_list->FeatureCount &&
-	  feature_list->FeatureRecord[index].FeatureTag == feature_tag)
-	{
-	  if (feature_index)
-	    *feature_index = index;
-
-	  return TRUE;
-	}
-    }
-
-  return FALSE;
+  return hb_ot_layout_language_find_feature (info->hb_face, tt,
+					     script_index,
+					     language_index,
+					     feature_tag,
+					     feature_index);
 }
 
 /**
@@ -650,21 +453,14 @@ PangoOTTag *
 pango_ot_info_list_scripts (PangoOTInfo      *info,
 			    PangoOTTableType  table_type)
 {
+  hb_tag_t tt = get_hb_table_type (table_type);
   PangoOTTag *result;
-  HB_ScriptList *script_list;
-  int i;
+  unsigned int count = 0;
 
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (!get_tables (info, table_type, &script_list, NULL))
-    return NULL;
-
-  result = g_new (PangoOTTag, script_list->ScriptCount + 1);
-
-  for (i=0; i < script_list->ScriptCount; i++)
-    result[i] = script_list->ScriptRecord[i].ScriptTag;
-
-  result[i] = 0;
+  hb_ot_layout_table_get_script_tags (info->hb_face, tt, &count, NULL);
+  result = g_new (PangoOTTag, count + 1);
+  hb_ot_layout_table_get_script_tags (info->hb_face, tt, &count, result);
+  result[count] = 0;
 
   return result;
 }
@@ -687,32 +483,14 @@ pango_ot_info_list_languages (PangoOTInfo      *info,
 			      guint             script_index,
 			      PangoOTTag        language_tag G_GNUC_UNUSED)
 {
+  hb_tag_t tt = get_hb_table_type (table_type);
   PangoOTTag *result;
-  HB_ScriptList *script_list;
-  HB_ScriptTable *script;
-  int i;
+  unsigned int count = 0;
 
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (script_index == PANGO_OT_NO_SCRIPT)
-    {
-      result = g_new (PangoOTTag, 0+1);
-      result[0] = 0;
-      return result;
-    }
-
-  if (!get_tables (info, table_type, &script_list, NULL))
-    return NULL;
-
-  g_return_val_if_fail (script_index < script_list->ScriptCount, NULL);
-  script = &script_list->ScriptRecord[script_index].Script;
-
-  result = g_new (PangoOTTag, script->LangSysCount + 1);
-
-  for (i = 0; i < script->LangSysCount; i++)
-    result[i] = script->LangSysRecord[i].LangSysTag;
-
-  result[i] = 0;
+  hb_ot_layout_script_get_language_tags (info->hb_face, tt, script_index, &count, NULL);
+  result = g_new (PangoOTTag, count + 1);
+  hb_ot_layout_script_get_language_tags (info->hb_face, tt, script_index, &count, result);
+  result[count] = 0;
 
   return result;
 }
@@ -739,52 +517,123 @@ pango_ot_info_list_features  (PangoOTInfo      *info,
 			      guint             script_index,
 			      guint             language_index)
 {
+  hb_tag_t tt = get_hb_table_type (table_type);
   PangoOTTag *result;
+  unsigned int count = 0;
 
-  HB_ScriptList *script_list;
-  HB_FeatureList *feature_list;
-  HB_ScriptTable *script;
-  HB_LangSys *lang_sys;
-
-  int i, j;
-
-  g_return_val_if_fail (PANGO_IS_OT_INFO (info), NULL);
-
-  if (script_index == PANGO_OT_NO_SCRIPT)
-    {
-      result = g_new (PangoOTTag, 0+1);
-      result[0] = 0;
-      return result;
-    }
-
-  if (!get_tables (info, table_type, &script_list, &feature_list))
-    return NULL;
-
-  g_return_val_if_fail (script_index < script_list->ScriptCount, NULL);
-  script = &script_list->ScriptRecord[script_index].Script;
-
-  if (language_index == PANGO_OT_DEFAULT_LANGUAGE)
-    lang_sys = &script->DefaultLangSys;
-  else
-    {
-      g_return_val_if_fail (language_index < script->LangSysCount, NULL);
-      lang_sys = &script->LangSysRecord[language_index].LangSys;
-    }
-
-  result = g_new (PangoOTTag, lang_sys->FeatureCount + 1);
-
-  j = 0;
-  for (i = 0; i < lang_sys->FeatureCount; i++)
-    {
-      HB_UShort index = lang_sys->FeatureIndex[i];
-
-      if (index < feature_list->FeatureCount)
-	result[j++] = feature_list->FeatureRecord[index].FeatureTag;
-    }
-
-  result[j] = 0;
+  hb_ot_layout_language_get_feature_tags (info->hb_face, tt, script_index, language_index, &count, NULL);
+  result = g_new (PangoOTTag, count + 1);
+  hb_ot_layout_language_get_feature_tags (info->hb_face, tt, script_index, language_index, &count, result);
+  result[count] = 0;
 
   return result;
 }
 
+void
+_pango_ot_info_substitute  (const PangoOTInfo    *info,
+			    const PangoOTRuleset *ruleset,
+			    PangoOTBuffer        *buffer)
+{
+  unsigned int i;
 
+  for (i = 0; i < ruleset->rules->len; i++)
+    {
+      PangoOTRule *rule = &g_array_index (ruleset->rules, PangoOTRule, i);
+      hb_mask_t mask;
+      unsigned int lookup_count, j;
+      unsigned int lookup_indexes[1000];
+
+      if (rule->table_type != PANGO_OT_TABLE_GSUB)
+	continue;
+
+      mask = rule->property_bit;
+      lookup_count = G_N_ELEMENTS (lookup_indexes);
+      hb_ot_layout_feature_get_lookup_indexes (info->hb_face,
+					       HB_OT_TAG_GSUB,
+					       rule->feature_index,
+					       &lookup_count,
+					       lookup_indexes);
+
+      lookup_count = MIN (G_N_ELEMENTS (lookup_indexes), lookup_count);
+      for (j = 0; j < lookup_count; j++)
+	hb_ot_layout_substitute_lookup (info->hb_face,
+					buffer->buffer,
+					lookup_indexes[j],
+					rule->property_bit);
+    }
+}
+
+void
+_pango_ot_info_position    (const PangoOTInfo    *info,
+			    const PangoOTRuleset *ruleset,
+			    PangoOTBuffer        *buffer)
+{
+  unsigned int i;
+  gboolean is_hinted;
+  hb_font_t *hb_font;
+
+  hb_buffer_clear_positions (buffer->buffer);
+
+  /* XXX reuse hb_font */
+  hb_font = hb_font_create ();
+  hb_font_set_scale (hb_font,
+		     info->face->size->metrics.x_scale,
+		     info->face->size->metrics.y_scale);
+  is_hinted = buffer->font->is_hinted;
+  hb_font_set_ppem (hb_font,
+		    is_hinted ? info->face->size->metrics.x_ppem : 0,
+		    is_hinted ? info->face->size->metrics.y_ppem : 0);
+
+  for (i = 0; i < ruleset->rules->len; i++)
+    {
+      PangoOTRule *rule = &g_array_index (ruleset->rules, PangoOTRule, i);
+      hb_mask_t mask;
+      unsigned int lookup_count, j;
+      unsigned int lookup_indexes[1000];
+
+      if (rule->table_type != PANGO_OT_TABLE_GPOS)
+	continue;
+
+      mask = rule->property_bit;
+      lookup_count = G_N_ELEMENTS (lookup_indexes);
+      hb_ot_layout_feature_get_lookup_indexes (info->hb_face,
+					       HB_OT_TAG_GPOS,
+					       rule->feature_index,
+					       &lookup_count,
+					       lookup_indexes);
+
+      lookup_count = MIN (G_N_ELEMENTS (lookup_indexes), lookup_count);
+      for (j = 0; j < lookup_count; j++)
+	hb_ot_layout_position_lookup (info->hb_face, hb_font,
+				      buffer->buffer,
+				      lookup_indexes[j],
+				      rule->property_bit);
+
+      buffer->applied_gpos = TRUE;
+    }
+
+    if (buffer->applied_gpos)
+    {
+      unsigned int i, j;
+      unsigned int len = hb_buffer_get_len (buffer->buffer);
+      hb_glyph_position_t *positions = hb_buffer_get_glyph_positions (buffer->buffer);
+
+      /* First handle all left-to-right connections */
+      for (j = 0; j < len; j++)
+      {
+	if (positions[j].cursive_chain > 0)
+	  positions[j].y_pos += positions[j - positions[j].cursive_chain].y_pos;
+      }
+
+      /* Then handle all right-to-left connections */
+      for (i = len; i > 0; i--)
+      {
+	j = i - 1;
+
+	if (positions[j].cursive_chain < 0)
+	  positions[j].y_pos += positions[j - positions[j].cursive_chain].y_pos;
+      }
+    }
+
+  hb_font_destroy (hb_font);
+}

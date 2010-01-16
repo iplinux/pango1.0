@@ -27,11 +27,13 @@ EXTRA_DIST = 			\
 	ChangeLog.pre-1-16	\
 	ChangeLog.pre-1-18	\
 	ChangeLog.pre-1-20	\
+	ChangeLog.pre-1-23	\
 	MAINTAINERS		\
 	HACKING			\
 	README.win32		\
 	pango-zip.sh.in		\
-	sanitize-la.sh
+	sanitize-la.sh		\
+	pango.doap
 MAINTAINERCLEANFILES = \
 	$(srcdir)/INSTALL \
 	$(srcdir)/aclocal.m4 \
@@ -48,7 +50,30 @@ MAINTAINERCLEANFILES = \
 	$(srcdir)/mkinstalldirs \
 	$(srcdir)/omf.make \
 	$(srcdir)/xmldocs.make \
+	$(srcdir)/gtk-doc.make \
+	$(srcdir)/ChangeLog \
 	`find "$(srcdir)" -type f -name Makefile.in -print`
+
+### ChangeLog generation
+
+CHANGELOG_START = 1.23.0^^
+
+ChangeLog: $(srcdir)/ChangeLog
+$(srcdir)/ChangeLog:
+	$(AM_V_GEN) if test -d "$(srcdir)/.git"; then \
+	  (GIT_DIR=$(top_srcdir)/.git ./missing --run \
+	   git log $(CHANGELOG_START).. --stat) | fmt --split-only > $@.tmp \
+	  && mv -f $@.tmp $@ \
+	  || ($(RM) $@.tmp; \
+	      echo Failed to generate ChangeLog, your ChangeLog may be outdated >&2; \
+	      (test -f $@ || echo git-log is required to generate this file >> $@)); \
+	else \
+	  test -f $@ || \
+	  (echo A git checkout and git-log is required to generate ChangeLog >&2 && \
+	  echo A git checkout and git-log is required to generate this file >> $@); \
+	fi
+.PHONY: $(srcdir)/ChangeLog
+
 
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = pango.pc
@@ -74,3 +99,5 @@ pkgconfig_DATA += pangowin32.pc
 endif
 
 DISTCHECK_CONFIGURE_FLAGS = --enable-gtk-doc --enable-man --disable-doc-cross-references
+
+-include $(top_srcdir)/git.mk

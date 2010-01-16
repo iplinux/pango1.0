@@ -35,8 +35,13 @@ struct _CairoViewerIface
 				       gpointer surface,
 				       int      width,
 				       int      height);
+
+  void (*paint_background) (gpointer  instance,
+			    cairo_t  *cr);
 };
 
-const CairoViewerIface *get_default_cairo_viewer_iface (void);
+gpointer cairo_viewer_iface_create (const CairoViewerIface **iface_out);
+
+void cairo_viewer_add_options (GOptionGroup *group);
 
 #endif /* VIEWER_CAIRO_H */

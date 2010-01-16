@@ -122,8 +122,59 @@ pango_utf8_strwidth (const gchar *p)
   return len;
 }
 
+/* Glib's g_utf8_strlen() is broken and stops at embedded NUL's.
+ * Wrap it here. */
+static G_GNUC_UNUSED glong
+pango_utf8_strlen (const gchar *p, gssize max)
+{
+  glong len = 0;
+  const gchar *start = p;
+  g_return_val_if_fail (p != NULL || max == 0, 0);
+
+  if (max <= 0)
+    return g_utf8_strlen (p, max);
+
+  p = g_utf8_next_char (p);
+  while (p - start < max)
+    {
+      ++len;
+      p = g_utf8_next_char (p);
+    }
+
+  /* only do the last len increment if we got a complete
+   * char (don't count partial chars)
+   */
+  if (p - start <= max)
+    ++len;
+
+  return len;
+}
+
+
+/* To be made public at some point */
+
+static G_GNUC_UNUSED void
+pango_glyph_string_reverse_range (PangoGlyphString *glyphs,
+				  int start, int end)
+{
+  int i, j;
+
+  for (i = start, j = end - 1; i < j; i++, j--)
+    {
+      PangoGlyphInfo glyph_info;
+      gint log_cluster;
+
+      glyph_info = glyphs->glyphs[i];
+      glyphs->glyphs[i] = glyphs->glyphs[j];
+      glyphs->glyphs[j] = glyph_info;
+
+      log_cluster = glyphs->log_clusters[i];
+      glyphs->log_clusters[i] = glyphs->log_clusters[j];
+      glyphs->log_clusters[j] = log_cluster;
+    }
+}
+
 
 G_END_DECLS
 
 #endif /* __PANGO_IMPL_UTILS_H__ */
-

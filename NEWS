@@ -1,3 +1,190 @@
+Overview of changes between 1.26.1 and 1.26.2
+=============================================
+- Fix non-standard C++ usage
+- Fix OpenType mark ligation
+- Bugs fixed:
+    Bug 602823 - void function cannot return value
+    Bug 602660 - [HB] don't use flexible arrays
+    Bug 602408 - Invalid C++ code breaks compile with Sun C++ Compiler
+
+Overview of changes between 1.26.0 and 1.26.1
+=============================================
+- Finally fix GPOS positioning and kerning with non-identity cairo matrices
+- [HB] Fix lookup_flag ignoring
+- Fix leak with non-mmapped fonts
+- Allow using uninstalled glib
+- Bugs fixed:
+    Bug 341481 - pangocairo kerning problem with nonidentity scaling
+    Bug 587768 - [patch] Don't build pango-view twice
+    Bug 594101 - [Indic] character class data updates to support unicode 5.1
+    Bug 596837 - Typo in pango_cairo_show_layout documentation
+
+Overview of changes between 1.25.6 and 1.26.0
+=============================================
+- New stable release series
+- Bugs fixed:
+	Bug 595539 - Regressions in rendering certain Thai sequences
+
+Overview of changes between 1.25.5 and 1.25.6
+=============================================
+- Fix a couple of array overflow bugs
+- Bugs fixed:
+    Bug 593240 - updating pango to latest git master makes things crash
+    Bug 593231 - < c99 compiler dislikes ValueRecord
+
+Overview of changes between 1.25.4 and 1.25.5
+=============================================
+- Minor HarfBuzz code shuffling
+- Bugs fixed:
+    Bug 592484 -  invalid write in HB
+    Bug 592194 -  Fix missing _SC_PAGE_SIZE macro
+
+Overview of changes between 1.25.3 and 1.25.4
+=============================================
+- Fix various possible overflows in HarfBuzz
+- Improve HB font sanitizing
+- Improved win32 performance
+- Really fix ming32 build issues
+- Re-enable introspection
+- Bugs fixed:
+    Bug 592131 -  Add AM_SILENT_RULES
+    Bug 592036 - integer overflow bug causes misrendering of Nepali
+	    characters
+    Bug 591511 – hh-blob.c does not compile using mingw on windows
+
+Overview of changes between 1.25.2 and 1.25.3
+=============================================
+- Fix couple of crashers
+- Enforce -fno-exceptions better, should fix build issues for
+  distros on x86-64.
+- Call mprotect() only when available.
+- New public API: pango_glyph_item_get_logical_widths()
+- Remove G_GNUC_PURE attr from pango_glyph_string_get_width()
+- Fix buffer corruption in HarfBuzz
+- Bugs fixed:
+    Bug 591413 – needs to link with libstdc++
+    Bug 591511 – hb-blob.c does not compile using mingw on windows
+    Bug 591557 – [HB] crash scrolling the evolution message list
+    Bug 591576 – crashed with SIGSEGV at pango
+    Bug 591465 – Gimp crashes upon opening the font selection dialog
+
+Overview of changes between 1.25.1 and 1.25.2
+=============================================
+- Tweak C++ compiler options.  If you get link errors with gcc on
+  x86-64 about __gxx_personality_v0(), make sure your CXXFLAGS does
+  not have -fexceptions.  This will be fixed in Pango itself later.
+- Fix crasher with gzipped fonts.
+    Bug 591409 – crash in firefox.  Handle non-mmapped FT_Face
+
+Overview of changes between 1.24.5 and 1.25.1
+=============================================
+- Merge harfbuzz-ng: brand new OpenType Layout engine
+  Currently is not very portable.  Will be fixed as
+  reports come in.
+
+- Port to ATSUI backend to use CoreText instead of ATS
+- New public API:
+
+	pango_gravity_get_for_script_and_width()
+
+- Misc bug fixes
+    Bug 590042 – pango-view.1 manpage should not be gzipped
+    Bug 410169 – gravity problem with Common chars
+    Bug 589113 – Some characters rotated incorrectly in vertical text
+    Bug 582851 -- Little fix for compiling with Cygwin
+    Bug 588060 -- Fonts missing on Cygwin
+
+Overview of changes between 1.24.4 and 1.24.5
+=============================================
+- Build introspection again
+- Misc bug fixes
+	Bug 589133 – Firefox 3.5 complains about invalid weak references
+	Bug 585806 – crash during pango_fc_font_map_shutdown
+	Bug 588678 – pango crash: install a new theme from
+
+Overview of changes between 1.24.3 and 1.24.4
+=============================================
+- Misc bug fixes
+    Bug 586814 – Crashes related to fontmap destruction after upgrade
+
+Overview of changes between 1.24.2 and 1.24.3
+=============================================
+- Fix build with new automake
+- Misc bug fixes
+    Bug 585337 – Fails to install: install: will not overwrite
+    	just-created
+    Bug 585164 – 'man preload' shows man page for pango-view
+    Bug 584328 – Persian sample text is not good
+    Bug 583250 – pango_font_metrics_get_approximate_char_width is
+	    wrong when LANG=fa_IR
+
+Overview of changes between 1.24.1 and 1.24.2
+=============================================
+- Misc bug fixes
+    Bug 580987 – SIGFPE in pango_glyph_string_index_to_x
+    Bug 580273 – Font metrics functions incorrectly listed as reporting
+	    point sizes
+    Bug 579694 – Cygwin parallel-build patch
+    Bug 578944 – pango-1.24.1 fails its testsuite
+    Bug 578935 – Syntax error (missing semicolon) in
+	    pango/pangowin32-fontmap.c
+
+Overview of changes between 1.24.0 and 1.24.1
+=============================================
+- Fix a couple of crashers
+- Fix minor pangofc API semantics breakage
+- Better handle SFNT fonts in dfont containers
+- Improved docs
+- Improved Indic shaper for new Unicode 5.1 characters
+- Misc bug fixes
+- Bugs fixed in this release:
+
+    Bug 577952 – Error loading {GDEF,GSUB,GPOS} table 0x6EAD
+    Bug 578336 – ABI breakage from 1.22 to 1.24 in fontmap field
+    	of PangoFcFont
+    Bug 556132 – gnome-panel crashed with SIGSEGV in
+    	g_cclosure_marshal_VOID__BOXED()
+    Bug 571291 – Unicode 5.1 support in pango - Indic Lanuages
+    Bug 576298 – Fails to link pango-view if --without-x is specified
+    	but cairo has X11 support
+
+Overview of changes between 1.23.0 and 1.24.0
+=============================================
+- pango-view improvements:
+
+  * pango-view -q now works without a X server.
+
+  * Ability to save to PS, EPS, PDF, and SVG files.  Filetype is
+    detected from output file extension.
+
+  * New options --foreground, --background, and --annotate.
+
+  * Now installs a manual page, thanks to help2man.
+
+- PangoFc API changes:
+
+  * PangoFcFont now has a "fontmap" property that subclasses can use
+    at construction time to setup the font->fontmap link.
+
+  * New backend-public API:
+
+	pango_fc_font_map_find_decoder()
+
+- Misc optimizations
+- Build fixes
+- Misc bug fixes
+- Bugs fixed in this release:
+    Bug 547963 – man page for pango-view
+    Bug 502804 – pango-view or pangocairo-view option to annotate
+    Bug 502801 – per-backend pango-view options
+    Bug 502805 – pango-view option for foreground/background color
+    Red Hat Bug 490331 -  Crash of galeon in libpango
+    Bug 523166 – pango-view opens display even when invoked with -q
+    Bug 567160 – Share cmap cache between PangoFcFont's of the same face
+    Red Hat Bug 487593 -  crash changing language in gdm
+    Bug 572662 – Remove deprecated GTK+ symbols
+    Bug 572529 – Poor -I ordering can break build
+
 Overview of changes between 1.22.4 and 1.23.0
 =============================================
 - Change the PangoFc font loading API to allow for lazy loading of fonts.

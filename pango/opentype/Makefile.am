@@ -1,62 +1,58 @@
-## Process this file with automake to produce Makefile.in
+# Process this file with automake to produce Makefile.in
 
-INCLUDES = 					\
-	$(FREETYPE_CFLAGS)			\
-	-I $(srcdir)
+NULL =
 
-noinst_LTLIBRARIES = libharfbuzz-1.la
+# The following warning options are useful for debugging: -Wpadded -Wcast-align
+#AM_CXXFLAGS = 
 
-MAINSOURCES =  \
-	harfbuzz.c
+noinst_LTLIBRARIES = libharfbuzz.la
 
-# included from harfbuzz.c
-INCLUDEDSOURCES = \
-	harfbuzz-buffer.c \
-	harfbuzz-gdef.c \
-	harfbuzz-gpos.c \
-	harfbuzz-gsub.c \
-	harfbuzz-impl.c \
-	harfbuzz-open.c \
-	harfbuzz-stream.c
+HBSOURCES =  \
+	hb-blob.c \
+	hb-buffer.c \
+	hb-buffer-private.h \
+	hb-font.cc \
+	hb-font-private.h \
+	hb-glib.h \
+	hb-glib.c \
+	hb-private.h \
+	hb-shape.h \
+	hb-shape.c \
+	hb-unicode.c \
+	hb-unicode.h \
+	hb-unicode-private.h \
+	hb-open-file-private.hh \
+	hb-open-type-private.hh \
+	hb-ot-layout.cc \
+	hb-ot-layout-common-private.hh \
+	hb-ot-layout-gdef-private.hh \
+	hb-ot-layout-gpos-private.hh \
+	hb-ot-layout-gsubgpos-private.hh \
+	hb-ot-layout-gsub-private.hh \
+	hb-ot-layout-private.h \
+	hb-object-private.h \
+	$(NULL)
 
-PUBLICHEADERS = \
-	harfbuzz.h \
-	harfbuzz-global.h \
-	harfbuzz-buffer.h \
-	harfbuzz-gdef.h \
-	harfbuzz-gpos.h \
-	harfbuzz-gsub.h \
-	harfbuzz-open.h
+HBHEADERS = \
+	hb.h \
+	hb-blob.h \
+	hb-buffer.h \
+	hb-common.h \
+	hb-font.h \
+	hb-ot.h \
+	hb-ot-layout.h \
+	$(NULL)
 
-PRIVATEHEADERS = \
-	harfbuzz-impl.h \
-	harfbuzz-buffer-private.h \
-	harfbuzz-gdef-private.h \
-	harfbuzz-gpos-private.h \
-	harfbuzz-gsub-private.h \
-	harfbuzz-open-private.h \
-	harfbuzz-stream-private.h
+libharfbuzz_la_SOURCES = $(HBSOURCES) $(HBHEADERS)
+libharfbuzz_la_CPPFLAGS = -DHAVE_GLIB $(GLIB_CFLAGS)
+libharfbuzz_la_LIBADD = $(GLIB_LIBS)
 
-libharfbuzz_1_la_SOURCES = \
-	$(MAINSOURCES) \
-	$(PUBLICHEADERS) \
-	$(PRIVATEHEADERS)
+noinst_PROGRAMS = main
 
-libharfbuzz_1_la_LIBADD = \
-	$(FREETYPE_LIBS)
+main_SOURCES = main.cc
+main_CPPFLAGS = -DHAVE_GLIB $(GLIB_CFLAGS)
+main_LDADD = libharfbuzz.la $(GLIB_LIBS)
 
-noinst_PROGRAMS = harfbuzz-dump
+EXTRA_DIST = README COPYING
 
-harfbuzz_dump_SOURCES =	\
-	harfbuzz-dump.c \
-	harfbuzz-dump.h \
-	harfbuzz-dump-main.c
-
-harfbuzz_dump_LDADD = \
-	$(libharfbuzz_1_la_LIBADD) \
-	libharfbuzz-1.la
-
-EXTRA_DIST = 		\
-	README		\
-	COPYING		\
-	$(INCLUDEDSOURCES)
+-include $(top_srcdir)/git.mk

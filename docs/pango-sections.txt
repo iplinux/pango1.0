@@ -118,6 +118,7 @@ pango_glyph_item_free
 pango_glyph_item_split
 pango_glyph_item_apply_attrs
 pango_glyph_item_letter_space
+pango_glyph_item_get_logical_widths
 PANGO_TYPE_GLYPH_ITEM_ITER
 pango_glyph_item_iter_copy
 pango_glyph_item_iter_free
@@ -889,7 +890,7 @@ pango_cairo_font_map_get_type
 <TITLE>ATSUI Fonts</TITLE>
 <FILE>atsui-fonts</FILE>
 PANGO_RENDER_TYPE_ATSUI
-pango_atsui_font_get_atsu_font_id
+pango_atsui_font_get_cgfont
 <SUBSECTION Standard>
 PANGO_ATSUI_FONT
 PANGO_ATSUI_FONT_CLASS
@@ -919,6 +920,7 @@ PangoFcFontMapClass
 pango_fc_font_map_create_context
 PangoFcDecoderFindFunc
 pango_fc_font_map_add_decoder_find_func
+pango_fc_font_map_find_decoder
 pango_fc_font_map_cache_clear
 pango_fc_font_map_shutdown
 pango_fc_font_description_from_pattern
@@ -1103,6 +1105,7 @@ PangoGravityHint
 PANGO_GRAVITY_IS_VERTICAL
 pango_gravity_get_for_matrix
 pango_gravity_get_for_script
+pango_gravity_get_for_script_and_width
 pango_gravity_to_rotation
 <SUBSECTION Standard>
 PANGO_TYPE_GRAVITY

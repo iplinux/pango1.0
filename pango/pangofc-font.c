@@ -34,22 +34,8 @@
 
 enum {
   PROP_0,
-  PROP_PATTERN
-};
-
-typedef struct _GUnicharToGlyphCacheEntry GUnicharToGlyphCacheEntry;
-
-/* An entry in the fixed-size cache for the gunichar -> glyph mapping.
- * The cache is indexed by the lower N bits of the gunichar (see
- * GLYPH_CACHE_NUM_ENTRIES).  For scripts with few code points,
- * this should provide pretty much instant lookups.
- *
- * The "ch" field is zero if that cache entry is invalid.
- */
-struct _GUnicharToGlyphCacheEntry
-{
-  gunichar   ch;
-  PangoGlyph glyph;
+  PROP_PATTERN,
+  PROP_FONTMAP
 };
 
 typedef struct _PangoFcFontPrivate PangoFcFontPrivate;
@@ -58,11 +44,9 @@ struct _PangoFcFontPrivate
 {
   PangoFcDecoder *decoder;
   PangoFcFontKey *key;
-  GUnicharToGlyphCacheEntry *char_to_glyph_cache;
+  PangoFcCmapCache *cmap_cache;
+  gboolean has_weak_pointer; /* have set a weak_pointer from fontmap to us */
 };
-
-#define GLYPH_CACHE_NUM_ENTRIES 256 /* should be power of two */
-#define GLYPH_CACHE_MASK (GLYPH_CACHE_NUM_ENTRIES - 1)
 
 static gboolean pango_fc_font_real_has_char  (PangoFcFont *font,
 					      gunichar     wc);
@@ -121,6 +105,13 @@ pango_fc_font_class_init (PangoFcFontClass *class)
 							 "The fontconfig pattern for this font",
 							 G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
 							 G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (object_class, PROP_FONTMAP,
+				   g_param_spec_object ("fontmap",
+							"Font Map",
+							"The PangoFc font map this font is associated with (Since: 1.26)",
+							PANGO_TYPE_FC_FONT_MAP,
+							G_PARAM_READWRITE |
+							G_PARAM_STATIC_STRINGS));
 
   g_type_class_add_private (object_class, sizeof (PangoFcFontPrivate));
 }
@@ -150,7 +141,15 @@ pango_fc_font_finalize (GObject *object)
   g_slist_free (fcfont->metrics_by_lang);
 
   if (fcfont->fontmap)
-    _pango_fc_font_map_remove (PANGO_FC_FONT_MAP (fcfont->fontmap), fcfont);
+    {
+      _pango_fc_font_map_remove (PANGO_FC_FONT_MAP (fcfont->fontmap), fcfont);
+      if (priv->has_weak_pointer)
+        {
+	  priv->has_weak_pointer = FALSE;
+	  g_object_remove_weak_pointer (G_OBJECT (fcfont->fontmap), (gpointer *) (gpointer) &fcfont->fontmap);
+	}
+      fcfont->fontmap = NULL;
+    }
 
   FcPatternDestroy (fcfont->font_pattern);
   pango_font_description_free (fcfont->description);
@@ -158,7 +157,8 @@ pango_fc_font_finalize (GObject *object)
   if (priv->decoder)
     _pango_fc_font_set_decoder (fcfont, NULL);
 
-  g_free (priv->char_to_glyph_cache);
+  if (priv->cmap_cache)
+    _pango_fc_cmap_cache_unref (priv->cmap_cache);
 
   G_OBJECT_CLASS (pango_fc_font_parent_class)->finalize (object);
 }
@@ -203,11 +203,12 @@ pango_fc_font_set_property (GObject       *object,
 			    const GValue  *value,
 			    GParamSpec    *pspec)
 {
+  PangoFcFont *fcfont = PANGO_FC_FONT (object);
+
   switch (prop_id)
     {
     case PROP_PATTERN:
       {
-	PangoFcFont *fcfont = PANGO_FC_FONT (object);
 	FcPattern *pattern = g_value_get_pointer (value);
 
 	g_return_if_fail (pattern != NULL);
@@ -219,11 +220,34 @@ pango_fc_font_set_property (GObject       *object,
 	fcfont->is_hinted = pattern_is_hinted (pattern);
 	fcfont->is_transformed = pattern_is_transformed (pattern);
       }
-      break;
+      goto set_decoder;
+
+    case PROP_FONTMAP:
+      {
+	PangoFcFontMap *fcfontmap = PANGO_FC_FONT_MAP (g_value_get_object (value));
+
+	g_return_if_fail (fcfont->fontmap == NULL);
+	fcfont->fontmap = (PangoFontMap *) fcfontmap;
+	if (fcfont->fontmap)
+	  {
+	    PangoFcFontPrivate *priv = fcfont->priv;
+	    priv->has_weak_pointer = TRUE;
+	    g_object_add_weak_pointer (G_OBJECT (fcfont->fontmap), (gpointer *) (gpointer) &fcfont->fontmap);
+	  }
+      }
+      goto set_decoder;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
+      return;
     }
+
+set_decoder:
+  /* set decoder if both pattern and fontmap are set now */
+  if (fcfont->font_pattern && fcfont->fontmap)
+    _pango_fc_font_set_decoder (fcfont,
+				pango_fc_font_map_find_decoder  ((PangoFcFontMap *) fcfont->fontmap,
+								 fcfont->font_pattern));
 }
 
 static void
@@ -238,6 +262,12 @@ pango_fc_font_get_property (GObject       *object,
       {
 	PangoFcFont *fcfont = PANGO_FC_FONT (object);
 	g_value_set_pointer (value, fcfont->font_pattern);
+      }
+      break;
+    case PROP_FONTMAP:
+      {
+	PangoFcFont *fcfont = PANGO_FC_FONT (object);
+	g_value_set_object (value, fcfont->fontmap);
       }
       break;
     default:
@@ -585,23 +615,25 @@ static guint
 pango_fc_font_real_get_glyph (PangoFcFont *font,
 			      gunichar     wc)
 {
+  PangoFcFontPrivate *priv = font->priv;
   FT_Face face;
   FT_UInt index;
 
   guint idx;
-  GUnicharToGlyphCacheEntry *entry;
+  PangoFcCmapCacheEntry *entry;
 
-  PangoFcFontPrivate *priv = font->priv;
 
-  if (G_UNLIKELY (priv->char_to_glyph_cache == NULL))
+  if (G_UNLIKELY (priv->cmap_cache == NULL))
     {
-      priv->char_to_glyph_cache = g_new0 (GUnicharToGlyphCacheEntry, GLYPH_CACHE_NUM_ENTRIES);
-      /* Make sure all cache entries are invalid initially */
-      priv->char_to_glyph_cache[0].ch = 1; /* char 1 cannot happen in bucket 0 */
+      priv->cmap_cache = _pango_fc_font_map_get_cmap_cache ((PangoFcFontMap *) font->fontmap,
+							    font);
+
+      if (G_UNLIKELY (!priv->cmap_cache))
+	return 0;
     }
 
-  idx = wc & GLYPH_CACHE_MASK;
-  entry = priv->char_to_glyph_cache + idx;
+  idx = wc & CMAP_CACHE_MASK;
+  entry = priv->cmap_cache->entries + idx;
 
   if (entry->ch != wc)
     {
@@ -754,9 +786,6 @@ _pango_fc_font_shutdown (PangoFcFont *font)
 
   if (PANGO_FC_FONT_GET_CLASS (font)->shutdown)
     PANGO_FC_FONT_GET_CLASS (font)->shutdown (font);
-
-  if (font->fontmap)
-    _pango_fc_font_map_remove (PANGO_FC_FONT_MAP (font->fontmap), font);
 }
 
 /**
@@ -778,6 +807,9 @@ pango_fc_font_kern_glyphs (PangoFcFont      *font,
   FT_Vector kerning;
   int i;
   gboolean hinting = font->is_hinted;
+  gboolean scale = FALSE;
+  double xscale = 1;
+  PangoFcFontKey *key;
 
   g_return_if_fail (PANGO_IS_FC_FONT (font));
   g_return_if_fail (glyphs != NULL);
@@ -792,6 +824,20 @@ pango_fc_font_kern_glyphs (PangoFcFont      *font,
       return;
     }
 
+  /* This is a kludge, and dupped in pango_ot_buffer_output().
+   * Should move the scale factor to PangoFcFont layer. */
+  key = _pango_fc_font_get_font_key (font);
+  if (key) {
+    const PangoMatrix *matrix = pango_fc_font_key_get_matrix (key);
+    PangoMatrix identity = PANGO_MATRIX_INIT;
+    if (G_UNLIKELY (matrix && 0 != memcmp (&identity, matrix, 2 * sizeof (double))))
+      {
+	scale = TRUE;
+	pango_matrix_get_font_scale_factors (matrix, &xscale, NULL);
+	if (xscale) xscale = 1 / xscale;
+      }
+  }
+
   for (i = 1; i < glyphs->num_glyphs; ++i)
     {
       error = FT_Get_Kerning (face,
@@ -805,6 +851,8 @@ pango_fc_font_kern_glyphs (PangoFcFont      *font,
 
 	if (hinting)
 	  adjustment = PANGO_UNITS_ROUND (adjustment);
+	if (G_UNLIKELY (scale))
+	  adjustment *= xscale;
 
 	glyphs->glyphs[i-1].geometry.width += adjustment;
       }

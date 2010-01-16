@@ -61,14 +61,28 @@ pango_glyph_string_set_size (PangoGlyphString *string, gint new_len)
   while (new_len > string->space)
     {
       if (string->space == 0)
-	string->space = 1;
-      else
-	string->space *= 2;
-
-      if (string->space < 0)
 	{
-	  g_warning ("glyph string length overflows maximum integer size, truncated");
-	  new_len = string->space = G_MAXINT - 8;
+	  string->space = 4;
+	}
+      else
+	{
+	  const guint max_space =
+	    MIN (G_MAXINT, G_MAXSIZE / MAX (sizeof(PangoGlyphInfo), sizeof(gint)));
+
+	  guint more_space = (guint)string->space * 2;
+
+	  if (more_space > max_space)
+	    {
+	      more_space = max_space;
+
+	      if ((guint)new_len > max_space)
+		{
+		  g_error ("%s: failed to allocate glyph string of length %i\n",
+			   G_STRLOC, new_len);
+		}
+	    }
+
+	  string->space = more_space;
 	}
     }
 
@@ -306,13 +320,17 @@ pango_glyph_string_get_width (PangoGlyphString *glyphs)
  * @text: the text corresponding to the glyphs
  * @length: the length of @text, in bytes
  * @embedding_level: the embedding level of the string
- * @logical_widths: an array whose length is g_utf8_strlen (text, length)
+ * @logical_widths: an array whose length is the number of characters in
+ *                  text (equal to g_utf8_strlen (text, length) unless
+ *                  text has NUL bytes)
  *                  to be filled in with the resulting character widths.
  *
  * Given a #PangoGlyphString resulting from pango_shape() and the corresponding
  * text, determine the screen width corresponding to each character. When
  * multiple characters compose a single cluster, the width of the entire
  * cluster is divided equally among the characters.
+ *
+ * See also pango_glyph_item_get_logical_widths().
  **/
 void
 pango_glyph_string_get_logical_widths (PangoGlyphString *glyphs,
@@ -321,48 +339,15 @@ pango_glyph_string_get_logical_widths (PangoGlyphString *glyphs,
 				       int               embedding_level,
 				       int              *logical_widths)
 {
-  /* Build a PangoGlyphItem so we can use PangoGlyphItemIter.
-   * This API should have been made to take a PangoGlyphItem... */
-  PangoItem item = {0, length, g_utf8_strlen (text, length),
+  /* Build a PangoGlyphItem and call the other API */
+  PangoItem item = {0, length, pango_utf8_strlen (text, length),
 		    {NULL, NULL, NULL,
 		     embedding_level, PANGO_GRAVITY_AUTO, 0,
 		     PANGO_SCRIPT_UNKNOWN, NULL,
 		     NULL}};
   PangoGlyphItem glyph_item = {&item, glyphs};
-  PangoGlyphItemIter iter;
-  gboolean has_cluster;
-  int dir;
 
-  dir = embedding_level % 2 == 0 ? +1 : -1;
-  for (has_cluster = pango_glyph_item_iter_init_start (&iter, &glyph_item, text);
-       has_cluster;
-       has_cluster = pango_glyph_item_iter_next_cluster (&iter))
-    {
-      int glyph_index, char_index, num_chars, cluster_width = 0, char_width;
-
-      for (glyph_index  = iter.start_glyph;
-	   glyph_index != iter.end_glyph;
-	   glyph_index += dir)
-        {
-	  cluster_width += glyphs->glyphs[glyph_index].geometry.width;
-	}
-
-      num_chars = iter.end_char - iter.start_char;
-      if (num_chars) /* pedantic */
-        {
-	  char_width = cluster_width / num_chars;
-
-	  for (char_index = iter.start_char;
-	       char_index < iter.end_char;
-	       char_index++)
-	    {
-	      logical_widths[char_index] = char_width;
-	    }
-
-	  /* add any residues to the first char */
-	  logical_widths[iter.start_char] += cluster_width - (char_width * num_chars);
-	}
-    }
+  pango_glyph_item_get_logical_widths (&glyph_item, text, logical_widths);
 }
 
 /* The initial implementation here is script independent,
@@ -491,6 +476,12 @@ pango_glyph_string_index_to_x (PangoGlyphString *glyphs,
 
   if (trailing)
     cluster_offset += 1;
+
+  if (G_UNLIKELY (!cluster_chars)) /* pedantic */
+    {
+      *x_pos = start_xpos;
+      return;
+    }
 
   *x_pos = ((cluster_chars - cluster_offset) * start_xpos +
 	    cluster_offset * end_xpos) / cluster_chars;
@@ -668,5 +659,3 @@ pango_glyph_string_x_to_index (PangoGlyphString *glyphs,
 	}
     }
 }
-
-

@@ -27,6 +27,7 @@
 
 G_BEGIN_DECLS
 
+
 typedef struct _PangoFcMetricsInfo  PangoFcMetricsInfo;
 
 struct _PangoFcMetricsInfo
@@ -34,6 +35,26 @@ struct _PangoFcMetricsInfo
   const char       *sample_str;
   PangoFontMetrics *metrics;
 };
+
+
+typedef struct _PangoFcCmapCacheEntry  PangoFcCmapCacheEntry;
+typedef struct _PangoFcCmapCache       PangoFcCmapCache;
+
+#define CMAP_CACHE_NUM_ENTRIES 256 /* should be power of two */
+#define CMAP_CACHE_MASK (CMAP_CACHE_NUM_ENTRIES - 1)
+
+struct _PangoFcCmapCacheEntry
+{
+  gunichar   ch;
+  PangoGlyph glyph;
+};
+
+struct _PangoFcCmapCache
+{
+  guint ref_count;
+  PangoFcCmapCacheEntry entries[CMAP_CACHE_NUM_ENTRIES];
+};
+
 
 #define PANGO_SCALE_26_6 (PANGO_SCALE / (1<<6))
 #define PANGO_PIXELS_26_6(d)				\
@@ -46,9 +67,14 @@ void _pango_fc_font_shutdown (PangoFcFont *fcfont);
 
 void           _pango_fc_font_map_remove          (PangoFcFontMap *fcfontmap,
 						   PangoFcFont    *fcfont);
+
 PangoCoverage *_pango_fc_font_map_get_coverage    (PangoFcFontMap *fcfontmap,
 						   PangoFcFont    *fcfont);
 PangoCoverage  *_pango_fc_font_map_fc_to_coverage (FcCharSet      *charset);
+
+PangoFcCmapCache *_pango_fc_font_map_get_cmap_cache (PangoFcFontMap *fcfontmap,
+						     PangoFcFont    *fcfont);
+void              _pango_fc_cmap_cache_unref (PangoFcCmapCache *cmap_cache);
 
 PangoFcDecoder *_pango_fc_font_get_decoder       (PangoFcFont    *font);
 void            _pango_fc_font_set_decoder       (PangoFcFont    *font,
@@ -66,6 +92,50 @@ void            pango_fc_font_get_raw_extents    (PangoFcFont    *font,
 
 PangoFontMetrics *pango_fc_font_create_metrics_for_context (PangoFcFont   *font,
 							    PangoContext  *context);
+
+
+
+/* To be made public at some point */
+
+#include <math.h>
+
+static G_GNUC_UNUSED void
+pango_matrix_get_font_scale_factors (const PangoMatrix *matrix,
+				     double *xscale, double *yscale)
+{
+/*
+ * Based on cairo-matrix.c:_cairo_matrix_compute_scale_factors()
+ *
+ * Copyright 2005, Keith Packard
+ */
+  double major = 0, minor = 0;
+
+  if (matrix) {
+    double det = matrix->xx * matrix->yy - matrix->yx * matrix->xy;
+
+    if (det)
+      {
+	double x = matrix->xx;
+	double y = matrix->yx;
+
+	major = sqrt (x*x + y*y);
+
+	/*
+	 * ignore mirroring
+	 */
+	if (det < 0)
+	  det = - det;
+
+	if (major)
+	  minor = det / major;
+      }
+  }
+
+  if (xscale)
+    *xscale = major;
+  if (yscale)
+    *yscale = minor;
+}
 
 G_END_DECLS
 

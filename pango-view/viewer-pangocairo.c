@@ -26,6 +26,8 @@
 
 #include <pango/pangocairo.h>
 
+static int opt_annotate = 0;
+
 typedef struct
 {
   const CairoViewerIface *iface;
@@ -36,7 +38,6 @@ typedef struct
   cairo_font_options_t *font_options;
 } CairoViewer;
 
-/* TODO: hinting */
 static gpointer
 pangocairo_view_create (const PangoViewer *klass G_GNUC_UNUSED)
 {
@@ -44,8 +45,7 @@ pangocairo_view_create (const PangoViewer *klass G_GNUC_UNUSED)
 
   instance = g_slice_new (CairoViewer);
 
-  instance->iface = get_default_cairo_viewer_iface ();
-  instance->backend = instance->iface->backend_class->create (instance->iface->backend_class);
+  instance->backend = cairo_viewer_iface_create (&instance->iface);
 
   instance->fontmap = pango_cairo_font_map_new ();
   pango_cairo_font_map_set_resolution (PANGO_CAIRO_FONT_MAP (instance->fontmap), opt_dpi);
@@ -53,8 +53,6 @@ pangocairo_view_create (const PangoViewer *klass G_GNUC_UNUSED)
   instance->font_options = cairo_font_options_create ();
   if (opt_hinting != HINT_DEFAULT)
     {
-      cairo_font_options_set_hint_metrics (instance->font_options, CAIRO_HINT_METRICS_ON);
-
       if (opt_hinting == HINT_NONE)
 	cairo_font_options_set_hint_style (instance->font_options, CAIRO_HINT_STYLE_NONE);
       else if (opt_hinting == HINT_FULL)
@@ -137,15 +135,15 @@ render_callback (PangoLayout *layout,
 		 int          x,
 		 int          y,
 		 gpointer     context,
-		 gpointer     data)
+		 gpointer     state)
 {
   cairo_t *cr = (cairo_t *) context;
-  gboolean show_borders = GPOINTER_TO_UINT (data) == 0xdeadbeef;
+  int annotate = (GPOINTER_TO_INT (state) + opt_annotate) % 3;
 
   cairo_save (cr);
   cairo_translate (cr, x, y);
 
-  if (show_borders)
+  if (annotate)
     {
       cairo_pattern_t *pattern;
       PangoRectangle ink, logical;
@@ -154,68 +152,71 @@ render_callback (PangoLayout *layout,
 
       pango_layout_get_extents (layout, &ink, &logical);
 
-      /* draw resolved gravity "roof" in blue */
-      cairo_save (cr);
-      cairo_translate (cr,
-		       (double)logical.x / PANGO_SCALE,
-		       (double)logical.y / PANGO_SCALE);
-      cairo_scale     (cr,
-		       (double)logical.width / PANGO_SCALE * 0.5,
-		       (double)logical.height / PANGO_SCALE * 0.5);
-      cairo_translate   (cr,  1.0,  1.0);
-      cairo_rotate (cr,
-	pango_gravity_to_rotation (
-	  pango_context_get_gravity (
-	    pango_layout_get_context (layout))));
-      cairo_move_to     (cr, -1.0, -1.0);
-      cairo_rel_line_to (cr, +1.0, -0.2); /* /   */
-      cairo_rel_line_to (cr, +1.0, +0.2); /*   \ */
-      cairo_close_path  (cr);             /*  -  */
-      pattern = cairo_pattern_create_linear (0, -1.0, 0, -1.2);
-      cairo_pattern_add_color_stop_rgba (pattern, 0.0, 0.0, 0.0, 1.0, 0.0);
-      cairo_pattern_add_color_stop_rgba (pattern, 1.0, 0.0, 0.0, 1.0, 0.15);
-      cairo_set_source (cr, pattern);
-      cairo_fill (cr);
-      /* once more, without close_path this time */
-      cairo_move_to     (cr, -1.0, -1.0);
-      cairo_rel_line_to (cr, +1.0, -0.2); /* /   */
-      cairo_rel_line_to (cr, +1.0, +0.2); /*   \ */
-      /* silly line_width is not locked :(. get rid of scale. */
-      cairo_restore (cr);
-      cairo_save (cr);
-      cairo_set_source_rgba (cr, 0.0, 0.0, 0.7, 0.2);
-      cairo_stroke (cr);
-      cairo_restore (cr);
+      if (annotate >= 2)
+        {
+	  /* draw resolved gravity "roof" in blue */
+	  cairo_save (cr);
+	  cairo_translate (cr,
+			   (double)logical.x / PANGO_SCALE,
+			   (double)logical.y / PANGO_SCALE);
+	  cairo_scale     (cr,
+			   (double)logical.width / PANGO_SCALE * 0.5,
+			   (double)logical.height / PANGO_SCALE * 0.5);
+	  cairo_translate   (cr,  1.0,  1.0);
+	  cairo_rotate (cr,
+	    pango_gravity_to_rotation (
+	      pango_context_get_gravity (
+		pango_layout_get_context (layout))));
+	  cairo_move_to     (cr, -1.0, -1.0);
+	  cairo_rel_line_to (cr, +1.0, -0.2); /* /   */
+	  cairo_rel_line_to (cr, +1.0, +0.2); /*   \ */
+	  cairo_close_path  (cr);             /*  -  */
+	  pattern = cairo_pattern_create_linear (0, -1.0, 0, -1.2);
+	  cairo_pattern_add_color_stop_rgba (pattern, 0.0, 0.0, 0.0, 1.0, 0.0);
+	  cairo_pattern_add_color_stop_rgba (pattern, 1.0, 0.0, 0.0, 1.0, 0.15);
+	  cairo_set_source (cr, pattern);
+	  cairo_fill (cr);
+	  /* once more, without close_path this time */
+	  cairo_move_to     (cr, -1.0, -1.0);
+	  cairo_rel_line_to (cr, +1.0, -0.2); /* /   */
+	  cairo_rel_line_to (cr, +1.0, +0.2); /*   \ */
+	  /* silly line_width is not locked :(. get rid of scale. */
+	  cairo_restore (cr);
+	  cairo_save (cr);
+	  cairo_set_source_rgba (cr, 0.0, 0.0, 0.7, 0.2);
+	  cairo_stroke (cr);
+	  cairo_restore (cr);
 
 
-      /* draw block progression arrow in green */
-      cairo_save (cr);
-      cairo_translate (cr,
-		       (double)logical.x / PANGO_SCALE,
-		       (double)logical.y / PANGO_SCALE);
-      cairo_scale     (cr,
-		       (double)logical.width / PANGO_SCALE * 0.5,
-		       (double)logical.height / PANGO_SCALE * 0.5);
-      cairo_translate   (cr,  1.0,  1.0);
-      cairo_move_to     (cr, -0.4, -0.7);
-      cairo_rel_line_to (cr, +0.8,  0.0); /*  --   */
-      cairo_rel_line_to (cr,  0.0, +0.9); /*    |  */
-      cairo_rel_line_to (cr, +0.4,  0.0); /*     - */
-      cairo_rel_line_to (cr, -0.8, +0.5); /*    /  */
-      cairo_rel_line_to (cr, -0.8, -0.5); /*  \    */
-      cairo_rel_line_to (cr, +0.4,  0.0); /* -     */
-      cairo_close_path  (cr);             /*  |    */
-      pattern = cairo_pattern_create_linear (0, -0.7, 0, 0.7);
-      cairo_pattern_add_color_stop_rgba (pattern, 0.0, 0.0, 1.0, 0.0, 0.0);
-      cairo_pattern_add_color_stop_rgba (pattern, 1.0, 0.0, 1.0, 0.0, 0.15);
-      cairo_set_source (cr, pattern);
-      cairo_fill_preserve (cr);
-      /* silly line_width is not locked :(. get rid of scale. */
-      cairo_restore (cr);
-      cairo_save (cr);
-      cairo_set_source_rgba (cr, 0.0, 0.7, 0.0, 0.2);
-      cairo_stroke (cr);
-      cairo_restore (cr);
+	  /* draw block progression arrow in green */
+	  cairo_save (cr);
+	  cairo_translate (cr,
+			   (double)logical.x / PANGO_SCALE,
+			   (double)logical.y / PANGO_SCALE);
+	  cairo_scale     (cr,
+			   (double)logical.width / PANGO_SCALE * 0.5,
+			   (double)logical.height / PANGO_SCALE * 0.5);
+	  cairo_translate   (cr,  1.0,  1.0);
+	  cairo_move_to     (cr, -0.4, -0.7);
+	  cairo_rel_line_to (cr, +0.8,  0.0); /*  --   */
+	  cairo_rel_line_to (cr,  0.0, +0.9); /*    |  */
+	  cairo_rel_line_to (cr, +0.4,  0.0); /*     - */
+	  cairo_rel_line_to (cr, -0.8, +0.5); /*    /  */
+	  cairo_rel_line_to (cr, -0.8, -0.5); /*  \    */
+	  cairo_rel_line_to (cr, +0.4,  0.0); /* -     */
+	  cairo_close_path  (cr);             /*  |    */
+	  pattern = cairo_pattern_create_linear (0, -0.7, 0, 0.7);
+	  cairo_pattern_add_color_stop_rgba (pattern, 0.0, 0.0, 1.0, 0.0, 0.0);
+	  cairo_pattern_add_color_stop_rgba (pattern, 1.0, 0.0, 1.0, 0.0, 0.15);
+	  cairo_set_source (cr, pattern);
+	  cairo_fill_preserve (cr);
+	  /* silly line_width is not locked :(. get rid of scale. */
+	  cairo_restore (cr);
+	  cairo_save (cr);
+	  cairo_set_source_rgba (cr, 0.0, 0.7, 0.0, 0.2);
+	  cairo_stroke (cr);
+	  cairo_restore (cr);
+	}
 
       /* draw baselines with line direction arrow in orange */
       cairo_save (cr);
@@ -306,13 +307,14 @@ transform_callback (PangoContext *context,
 }
 
 static void
-pangocairo_view_render (gpointer      instance G_GNUC_UNUSED,
+pangocairo_view_render (gpointer      instance,
 			gpointer      surface,
 			PangoContext *context,
 			int          *width,
 			int          *height,
 			gpointer      state)
 {
+  CairoViewer *c = (CairoViewer *) instance;
   cairo_t *cr;
   CairoSurface *c_surface = (CairoSurface *) surface;
 
@@ -322,10 +324,15 @@ pangocairo_view_render (gpointer      instance G_GNUC_UNUSED,
 
   transform_callback (context, NULL, cr, state);
 
-  cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-  cairo_paint (cr);
+  c->iface->paint_background (instance, cr);
 
-  cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
+  cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
+  cairo_set_source_rgba (cr,
+			 opt_fg_color.red / 65535.,
+			 opt_fg_color.green / 65535.,
+			 opt_fg_color.blue / 65535.,
+			 opt_fg_alpha / 65535.);
+
   do_output (context, render_callback, transform_callback, cr, state, width, height);
 
   cairo_destroy (cr);
@@ -366,6 +373,9 @@ pangocairo_view_create_window (gpointer    instance,
 {
   CairoViewer *c = (CairoViewer *) instance;
 
+  if (!c->iface->backend_class->create_window)
+    return NULL;
+
   return c->iface->backend_class->create_window (c->backend,
 						 title,
 						 width, height);
@@ -398,10 +408,38 @@ pangocairo_view_display (gpointer instance,
 					   state);
 }
 
+static GOptionGroup *
+pangocairo_view_get_option_group (const PangoViewer *klass G_GNUC_UNUSED)
+{
+  GOptionEntry entries[] =
+  {
+    {"annotate",	0, 0, G_OPTION_ARG_INT, &opt_annotate,
+     "Annotate the output",				"1 or 2"},
+    {NULL}
+  };
+  GOptionGroup *group;
+
+  group = g_option_group_new ("cairo",
+			      "Cairo backend options:",
+			      "Options understood by the cairo backend",
+			      NULL,
+			      NULL);
+
+  g_option_group_add_entries (group, entries);
+
+  cairo_viewer_add_options (group);
+
+  return group;
+}
+
 const PangoViewer pangocairo_viewer = {
   "PangoCairo",
   "cairo",
+#ifdef HAVE_CAIRO_PNG
+  "png",
+#else
   NULL,
+#endif
   pangocairo_view_create,
   pangocairo_view_destroy,
   pangocairo_view_get_context,
@@ -415,5 +453,8 @@ const PangoViewer pangocairo_viewer = {
 #endif
   pangocairo_view_create_window,
   pangocairo_view_destroy_window,
-  pangocairo_view_display
+  pangocairo_view_display,
+  NULL,
+  NULL,
+  pangocairo_view_get_option_group
 };

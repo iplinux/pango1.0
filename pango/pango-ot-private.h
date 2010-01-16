@@ -25,7 +25,8 @@
 #include <glib-object.h>
 
 #include <pango/pango-ot.h>
-#include "opentype/harfbuzz.h"
+#include "opentype/hb-ot.h"
+#include "opentype/hb-glib.h"
 
 G_BEGIN_DECLS
 
@@ -39,9 +40,7 @@ struct _PangoOTInfo
 
   FT_Face face;
 
-  HB_GSUB gsub;
-  HB_GDEF gdef;
-  HB_GPOS gpos;
+  hb_face_t *hb_face;
 };
 
 struct _PangoOTInfoClass
@@ -49,6 +48,15 @@ struct _PangoOTInfoClass
   GObjectClass parent_class;
 };
 
+
+typedef struct _PangoOTRule PangoOTRule;
+
+struct _PangoOTRule
+{
+  gulong property_bit;
+  guint  feature_index;
+  guint  table_type : 1;
+};
 
 typedef struct _PangoOTRulesetClass PangoOTRulesetClass;
 
@@ -72,7 +80,7 @@ struct _PangoOTRulesetClass
 
 struct _PangoOTBuffer
 {
-  HB_Buffer buffer;
+  hb_buffer_t *buffer;
   gboolean should_free_hb_buffer;
   PangoFcFont *font;
   guint rtl : 1;
@@ -80,9 +88,13 @@ struct _PangoOTBuffer
   guint applied_gpos : 1;
 };
 
-HB_GDEF pango_ot_info_get_gdef (PangoOTInfo *info);
-HB_GSUB pango_ot_info_get_gsub (PangoOTInfo *info);
-HB_GPOS pango_ot_info_get_gpos (PangoOTInfo *info);
+hb_face_t *_pango_ot_info_get_hb_face (PangoOTInfo *info);
+void _pango_ot_info_substitute  (const PangoOTInfo    *info,
+				 const PangoOTRuleset *ruleset,
+				 PangoOTBuffer        *buffer);
+void _pango_ot_info_position    (const PangoOTInfo    *info,
+				 const PangoOTRuleset *ruleset,
+				 PangoOTBuffer        *buffer);
 
 G_END_DECLS
 

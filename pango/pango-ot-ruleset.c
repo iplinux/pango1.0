@@ -24,15 +24,6 @@
 #include "pango-ot-private.h"
 #include "pango-impl-utils.h"
 
-typedef struct _PangoOTRule PangoOTRule;
-
-struct _PangoOTRule
-{
-  gulong     property_bit;
-  HB_UShort  feature_index;
-  guint      table_type : 1;
-};
-
 static void pango_ot_ruleset_class_init (GObjectClass   *object_class);
 static void pango_ot_ruleset_init       (PangoOTRuleset *ruleset);
 static void pango_ot_ruleset_finalize   (GObject        *object);
@@ -491,34 +482,12 @@ void
 pango_ot_ruleset_substitute  (const PangoOTRuleset *ruleset,
 			      PangoOTBuffer        *buffer)
 {
-  unsigned int i;
-
-  HB_GSUB gsub = NULL;
-
   g_return_if_fail (PANGO_IS_OT_RULESET (ruleset));
   g_return_if_fail (ruleset->info != NULL);
 
-  for (i = 0; i < ruleset->rules->len; i++)
-    {
-      PangoOTRule *rule = &g_array_index (ruleset->rules, PangoOTRule, i);
-
-      if (rule->table_type != PANGO_OT_TABLE_GSUB)
-	continue;
-
-      if (!gsub)
-	{
-	  gsub = pango_ot_info_get_gsub (ruleset->info);
-
-	  if (gsub)
-	    HB_GSUB_Clear_Features (gsub);
-	  else
-	    return;
-	}
-
-      HB_GSUB_Add_Feature (gsub, rule->feature_index, rule->property_bit);
-    }
-
-  HB_GSUB_Apply_String (gsub, buffer->buffer);
+  _pango_ot_info_substitute (ruleset->info,
+			     ruleset,
+			     buffer);
 }
 
 /**
@@ -535,38 +504,14 @@ void
 pango_ot_ruleset_position (const PangoOTRuleset *ruleset,
 			   PangoOTBuffer        *buffer)
 {
-  unsigned int i;
-
-  HB_GPOS gpos = NULL;
-
   g_return_if_fail (PANGO_IS_OT_RULESET (ruleset));
   g_return_if_fail (ruleset->info != NULL);
 
-  for (i = 0; i < ruleset->rules->len; i++)
-    {
-      PangoOTRule *rule = &g_array_index (ruleset->rules, PangoOTRule, i);
-
-      if (rule->table_type != PANGO_OT_TABLE_GPOS)
-	continue;
-
-      if (!gpos)
-	{
-	  gpos = pango_ot_info_get_gpos (ruleset->info);
-
-	  if (gpos)
-	    HB_GPOS_Clear_Features (gpos);
-	  else
-	    return;
-	}
-
-      HB_GPOS_Add_Feature (gpos, rule->feature_index, rule->property_bit);
-    }
-
-  if (HB_GPOS_Apply_String (ruleset->info->face, gpos, 0, buffer->buffer,
-			    FALSE /* enable device-dependant values */,
-			    buffer->rtl) == HB_Err_Ok)
-    buffer->applied_gpos = TRUE;
+  _pango_ot_info_position   (ruleset->info,
+			     ruleset,
+			     buffer);
 }
+
 
 /* ruleset descriptions */
 

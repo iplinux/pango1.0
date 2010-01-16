@@ -26,7 +26,7 @@ g_quark_from_string()) is used to identify the renderer in pango_find_map().
 
 
 
-<!-- ##### FUNCTION pango_atsui_font_get_atsu_font_id ##### -->
+<!-- ##### FUNCTION pango_atsui_font_get_cgfont ##### -->
 <para>
 
 </para>

@@ -293,35 +293,22 @@ pango_layout_copy (PangoLayout *src)
 
   g_return_val_if_fail (PANGO_IS_LAYOUT (src), NULL);
 
-  layout = pango_layout_new (src->context);
+  /* Copy referenced members */
 
+  layout = pango_layout_new (src->context);
   if (src->attrs)
     layout->attrs = pango_attr_list_copy (src->attrs);
-
   if (src->font_desc)
     layout->font_desc = pango_font_description_copy (src->font_desc);
-
-  layout->text = g_strdup (src->text);
-  layout->length = src->length;
-  layout->width = src->width;
-  layout->height = src->height;
-  layout->indent = src->indent;
-  layout->spacing = src->spacing;
-  layout->justify = src->justify;
-  layout->auto_dir = src->auto_dir;
-  layout->alignment = src->alignment;
-  layout->n_chars = src->n_chars;
-  layout->tab_width = src->tab_width;
-
   if (src->tabs)
     layout->tabs = pango_tab_array_copy (src->tabs);
-  layout->wrap = src->wrap;
-  layout->ellipsize = src->ellipsize;
 
-  layout->unknown_glyphs_count = -1;
+  /* Dupped */
+  layout->text = g_strdup (src->text);
 
-  /* unknown_glyphs_count, is_wrapped, is_ellipsized, log_attrs, lines
-   * fields are updated by check_lines */
+  /* Value fields */
+  memcpy (&layout->copy_begin, &src->copy_begin,
+	  G_STRUCT_OFFSET (PangoLayout, copy_end) - G_STRUCT_OFFSET (PangoLayout, copy_begin));
 
   return layout;
 }
@@ -473,7 +460,7 @@ pango_layout_set_wrap (PangoLayout  *layout,
     {
       layout->wrap = wrap;
 
-      if (layout->is_wrapped)
+      if (layout->width != -1)
 	pango_layout_clear_lines (layout);
     }
 }
@@ -1084,7 +1071,7 @@ pango_layout_set_text (PangoLayout *layout,
     /* TODO: Write out the beginning excerpt of text? */
     g_warning ("Invalid UTF-8 string passed to pango_layout_set_text()");
 
-  layout->n_chars = g_utf8_strlen (layout->text, -1);
+  layout->n_chars = pango_utf8_strlen (layout->text, -1);
 
   pango_layout_clear_lines (layout);
 
@@ -1737,7 +1724,7 @@ pango_layout_move_cursor_visually (PangoLayout *layout,
     old_index = g_utf8_next_char (layout->text + old_index) - layout->text;
 
   log2vis_map = pango_layout_line_get_log2vis_map (line, strong);
-  n_vis = g_utf8_strlen (layout->text + line->start_index, line->length);
+  n_vis = pango_utf8_strlen (layout->text + line->start_index, line->length);
 
   /* Clamp old_index to fit on the line */
   if (old_index > (line->start_index + line->length))
@@ -1793,7 +1780,7 @@ pango_layout_move_cursor_visually (PangoLayout *layout,
 	  paragraph_boundary = (line->start_index != old_index);
 	}
 
-      n_vis = g_utf8_strlen (layout->text + line->start_index, line->length);
+      n_vis = pango_utf8_strlen (layout->text + line->start_index, line->length);
       start_offset = g_utf8_pointer_to_offset (layout->text, layout->text + line->start_index);
 
       if (vis_pos == 0 && direction < 0)
@@ -2052,7 +2039,7 @@ pango_layout_line_get_vis2log_map (PangoLayoutLine *line,
   int n_chars;
 
   pango_layout_line_get_range (line, &start, &end);
-  n_chars = g_utf8_strlen (start, end - start);
+  n_chars = pango_utf8_strlen (start, end - start);
 
   result = g_new (int, n_chars + 1);
 
@@ -2139,7 +2126,7 @@ pango_layout_line_get_log2vis_map (PangoLayoutLine *line,
   int n_chars;
 
   pango_layout_line_get_range (line, &start, &end);
-  n_chars = g_utf8_strlen (start, end - start);
+  n_chars = pango_utf8_strlen (start, end - start);
   result = g_new0 (int, end - start + 1);
 
   reverse_map = pango_layout_line_get_vis2log_map (line, strong);
@@ -3109,6 +3096,10 @@ struct _ParaBreakState
   int remaining_width;		/* Amount of space remaining on line; < 0 is infinite */
 };
 
+static gboolean
+should_ellipsize_current_line (PangoLayout    *layout,
+			       ParaBreakState *state);
+
 static PangoGlyphString *
 shape_run (PangoLayoutLine *line,
 	   ParaBreakState  *state,
@@ -3173,6 +3164,7 @@ insert_run (PangoLayoutLine *line,
 	pango_glyph_string_free (state->glyphs);
       state->glyphs = NULL;
       g_free (state->log_widths);
+      state->log_widths = NULL;
     }
 
   line->runs = g_slist_prepend (line->runs, run);
@@ -3186,11 +3178,11 @@ debug (const char *where, PangoLayoutLine *line, ParaBreakState *state)
 {
   int line_width = pango_layout_line_get_width (line);
 
-  g_message ("rem %d + line %d = %d		%s",
-	     state->remaining_width,
-	     line_width,
-	     state->remaining_width + line_width,
-	     where);
+  g_debug ("rem %d + line %d = %d		%s",
+	   state->remaining_width,
+	   line_width,
+	   state->remaining_width + line_width,
+	   where);
 }
 #else
 # define DEBUG(where, line, state) do { } while (0)
@@ -3245,7 +3237,8 @@ process_item (PangoLayout     *layout,
     }
 
   if (!layout->single_paragraph &&
-      g_utf8_get_char (layout->text + item->offset) == LINE_SEPARATOR)
+      g_utf8_get_char (layout->text + item->offset) == LINE_SEPARATOR &&
+      !should_ellipsize_current_line (layout, state))
     {
       insert_run (line, state, item, TRUE);
       state->log_widths_offset += item->num_chars;
@@ -3289,10 +3282,9 @@ process_item (PangoLayout     *layout,
 
       if (processing_new_item)
 	{
+	  PangoGlyphItem glyph_item = {item, state->glyphs};
 	  state->log_widths = g_new (int, item->num_chars);
-	  pango_glyph_string_get_logical_widths (state->glyphs,
-						 layout->text + item->offset, item->length, item->analysis.level,
-						 state->log_widths);
+	  pango_glyph_item_get_logical_widths (&glyph_item, layout->text, state->log_widths);
 	}
 
     retry_break:
@@ -3377,6 +3369,7 @@ process_item (PangoLayout     *layout,
 	  pango_glyph_string_free (state->glyphs);
 	  state->glyphs = NULL;
 	  g_free (state->log_widths);
+	  state->log_widths = NULL;
 
 	  return BREAK_NONE_FIT;
 	}
@@ -3630,7 +3623,7 @@ get_items_log_attrs (const char   *text,
       /* Break the paragraph delimiters with the last item */
       if (items->next == NULL)
 	{
-	  tmp_item.num_chars += g_utf8_strlen (text + index + tmp_item.length, para_delimiter_len);
+	  tmp_item.num_chars += pango_utf8_strlen (text + index + tmp_item.length, para_delimiter_len);
 	  tmp_item.length += para_delimiter_len;
 	}
 
@@ -3654,7 +3647,7 @@ pango_layout_get_effective_attributes (PangoLayout *layout)
   PangoAttrList *attrs;
 
   if (layout->attrs)
-   attrs = pango_attr_list_copy (layout->attrs);
+    attrs = pango_attr_list_copy (layout->attrs);
   else
     attrs = pango_attr_list_new ();
 
@@ -3843,7 +3836,7 @@ pango_layout_check_lines (PangoLayout *layout)
       state.glyphs = NULL;
       state.log_widths = NULL;
 
-      /* for deterministic bug haunting's sake set everything! */
+      /* for deterministic bug hunting's sake set everything! */
       state.line_width = -1;
       state.remaining_width = -1;
       state.log_widths_offset = 0;
@@ -3869,7 +3862,7 @@ pango_layout_check_lines (PangoLayout *layout)
 	done = TRUE;
 
       if (!done)
-	start_offset += g_utf8_strlen (start, (end - start) + delim_len);
+	start_offset += pango_utf8_strlen (start, (end - start) + delim_len);
 
       start = end + delim_len;
     }
@@ -4338,6 +4331,15 @@ pango_layout_get_empty_extents_at_index (PangoLayout    *layout,
       PangoFontDescription *font_desc = NULL;
       gboolean free_font_desc = FALSE;
 
+      font_desc = pango_context_get_font_description (layout->context);
+
+      if (layout->font_desc)
+        {
+	  font_desc = pango_font_description_copy_static (font_desc);
+	  pango_font_description_merge (font_desc, layout->font_desc, TRUE);
+	  free_font_desc = TRUE;
+	}
+
       /* Find the font description for this line
        */
       if (layout->attrs)
@@ -4358,8 +4360,11 @@ pango_layout_get_empty_extents_at_index (PangoLayout    *layout,
 		  else
 		    base_font_desc = pango_context_get_font_description (layout->context);
 
-		  font_desc = pango_font_description_copy_static (base_font_desc);
-		  free_font_desc = TRUE;
+		  if (!free_font_desc)
+		    {
+		      font_desc = pango_font_description_copy_static (font_desc);
+		      free_font_desc = TRUE;
+		    }
 
 		  pango_attr_iterator_get_font (iter,
 						font_desc,
@@ -4373,13 +4378,6 @@ pango_layout_get_empty_extents_at_index (PangoLayout    *layout,
 	  while (pango_attr_iterator_next (iter));
 
 	  pango_attr_iterator_destroy (iter);
-	}
-      else
-	{
-	  if (layout->font_desc)
-	    font_desc = layout->font_desc;
-	  else
-	    font_desc = pango_context_get_font_description (layout->context);
 	}
 
       font = pango_context_load_font (layout->context, font_desc);
@@ -5156,17 +5154,20 @@ pango_layout_line_postprocess (PangoLayoutLine *line,
 			       ParaBreakState  *state,
 			       gboolean         wrapped)
 {
-  PangoLayoutRun *last_run = line->runs->data;
   gboolean ellipsized = FALSE;
   
-  /* NB: the runs are in reverse order at this point, since we prepended them to the list
+  DEBUG ("postprocessing", line, state);
+
+  /* Truncate the logical-final whitespace in the line if we broke the line at it
    */
+  if (wrapped)
+    /* The runs are in reverse order at this point, since we prepended them to the list.
+     * So, the first run is the last logical run. */
+    zero_line_final_space (line, state, line->runs->data);
 
   /* Reverse the runs
    */
   line->runs = g_slist_reverse (line->runs);
-
-  DEBUG ("postprocessing", line, state);
 
   /* Ellipsize the line if necessary
    */
@@ -5175,11 +5176,6 @@ pango_layout_line_postprocess (PangoLayoutLine *line,
     {
       ellipsized = _pango_layout_line_ellipsize (line, state->attrs, state->line_width);
     }
-
-  /* Truncate the logical-final whitespace in the line if we broke the line at it
-   */
-  if (wrapped)
-    zero_line_final_space (line, state, last_run);
 
   DEBUG ("after removing final space", line, state);
 
@@ -5354,7 +5350,7 @@ update_cluster (PangoLayoutIter *iter,
     }
 
   cluster_text = iter->layout->text + iter->run->item->offset + cluster_start_index;
-  iter->cluster_num_chars = g_utf8_strlen (cluster_text, cluster_length);
+  iter->cluster_num_chars = pango_utf8_strlen (cluster_text, cluster_length);
 
   if (iter->ltr)
     iter->index = cluster_text - iter->layout->text;

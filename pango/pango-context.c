@@ -29,6 +29,7 @@
 #include "pango-engine.h"
 #include "pango-engine-private.h"
 #include "pango-modules.h"
+#include "pango-script-private.h"
 
 struct _PangoContext
 {
@@ -286,7 +287,6 @@ pango_context_load_font (PangoContext               *context,
 			 const PangoFontDescription *desc)
 {
   g_return_val_if_fail (context != NULL, NULL);
-  g_return_val_if_fail (pango_font_description_get_family (desc) != NULL, NULL);
 
   return pango_font_map_load_font (context->font_map, context, desc);
 }
@@ -305,11 +305,9 @@ pango_context_load_font (PangoContext               *context,
 PangoFontset *
 pango_context_load_fontset (PangoContext               *context,
 			    const PangoFontDescription *desc,
-			     PangoLanguage             *language)
+			    PangoLanguage             *language)
 {
   g_return_val_if_fail (context != NULL, NULL);
-  g_return_val_if_fail (pango_font_description_get_family (desc) != NULL, NULL);
-  g_return_val_if_fail (pango_font_description_get_size (desc) != 0, NULL);
 
   return pango_font_map_load_fontset (context->font_map, context, desc, language);
 }
@@ -647,10 +645,26 @@ typedef enum {
   SCRIPT_CHANGED       = 1 << 1,
   LANG_CHANGED         = 1 << 2,
   FONT_CHANGED         = 1 << 3,
-  DERIVED_LANG_CHANGED = 1 << 4
+  DERIVED_LANG_CHANGED = 1 << 4,
+  WIDTH_CHANGED        = 1 << 5
 } ChangedFlags;
 
+
+
+typedef struct _PangoWidthIter PangoWidthIter;
+
+struct _PangoWidthIter
+{
+	const gchar *text_start;
+	const gchar *text_end;
+	const gchar *start;
+	const gchar *end;
+	gboolean wide;
+};
+
 typedef struct _ItemizeState ItemizeState;
+
+
 
 struct _ItemizeState
 {
@@ -685,9 +699,11 @@ struct _ItemizeState
 
   ChangedFlags changed;
 
-  PangoScriptIter *script_iter;
+  PangoScriptIter script_iter;
   const char *script_end;
   PangoScript script;
+
+  PangoWidthIter width_iter;
 
   PangoLanguage *derived_lang;
   PangoEngineLang *lang_engine;
@@ -779,6 +795,38 @@ update_end (ItemizeState *state)
     state->run_end = state->attr_end;
   if (state->script_end < state->run_end)
     state->run_end = state->script_end;
+  if (state->width_iter.end < state->run_end)
+    state->run_end = state->width_iter.end;
+}
+
+static void
+width_iter_next(PangoWidthIter* iter)
+{
+  iter->start = iter->end;
+
+  if (iter->end < iter->text_end)
+    {
+      gunichar ch = g_utf8_get_char (iter->end);
+      iter->wide = g_unichar_iswide (ch);
+    }
+
+  while (iter->end < iter->text_end)
+    {
+      gunichar ch = g_utf8_get_char (iter->end);
+      if (g_unichar_iswide (ch) != iter->wide)
+        break;
+      iter->end = g_utf8_next_char (iter->end);
+    }
+}
+
+static void
+width_iter_init (PangoWidthIter* iter, const char* text, int length)
+{
+  iter->text_start = text;
+  iter->text_end = text + length;
+  iter->start = iter->end = text;
+
+  width_iter_next (iter);
 }
 
 static void
@@ -850,9 +898,12 @@ itemize_state_init (ItemizeState      *state,
 
   /* Initialize the script iterator
    */
-  state->script_iter = pango_script_iter_new (text + start_index, length);
-  pango_script_iter_get_range (state->script_iter, NULL,
+  _pango_script_iter_init (&state->script_iter, text + start_index, length);
+  pango_script_iter_get_range (&state->script_iter, NULL,
 			       &state->script_end, &state->script);
+
+  /* Initialize the width iterator */
+  width_iter_init (&state->width_iter, text + start_index, length);
 
   update_end (state);
 
@@ -873,7 +924,7 @@ itemize_state_init (ItemizeState      *state,
   state->fallback_engines = NULL;
   state->base_font = NULL;
 
-  state->changed = EMBEDDING_CHANGED | SCRIPT_CHANGED | LANG_CHANGED | FONT_CHANGED;
+  state->changed = EMBEDDING_CHANGED | SCRIPT_CHANGED | LANG_CHANGED | FONT_CHANGED | WIDTH_CHANGED;
 }
 
 static gboolean
@@ -899,10 +950,15 @@ itemize_state_next (ItemizeState *state)
 
   if (state->run_end == state->script_end)
     {
-      pango_script_iter_next (state->script_iter);
-      pango_script_iter_get_range (state->script_iter, NULL,
+      pango_script_iter_next (&state->script_iter);
+      pango_script_iter_get_range (&state->script_iter, NULL,
 				   &state->script_end, &state->script);
       state->changed |= SCRIPT_CHANGED;
+    }
+  if (state->run_end == state->width_iter.end)
+    {
+      width_iter_next (&state->width_iter);
+      state->changed |= WIDTH_CHANGED;
     }
 
   update_end (state);
@@ -1067,6 +1123,9 @@ get_shaper_and_font_foreach (PangoFontset *fontset G_GNUC_UNUSED,
   GetShaperFontInfo *info = data;
   GSList *l;
 
+  if (G_UNLIKELY (!font))
+    return FALSE;
+
   for (l = info->engines; l; l = l->next)
     {
       PangoEngineShape *engine = l->data;
@@ -1230,10 +1289,11 @@ itemize_state_update_for_new_run (ItemizeState *state)
 {
   /* This block should be moved to update_attr_iterator, but I'm too lazy to
    * do it right now */
-  if (state->changed & (FONT_CHANGED | SCRIPT_CHANGED))
+  if (state->changed & (FONT_CHANGED | SCRIPT_CHANGED | WIDTH_CHANGED))
     {
       PangoGravity old_gravity = state->resolved_gravity;
 
+      /* Font-desc gravity overrides everything */
       if (state->font_desc_gravity != PANGO_GRAVITY_AUTO)
 	{
 	  state->resolved_gravity = state->font_desc_gravity;
@@ -1246,9 +1306,10 @@ itemize_state_update_for_new_run (ItemizeState *state)
 	  if (G_LIKELY (gravity == PANGO_GRAVITY_AUTO))
 	    gravity = state->context->resolved_gravity;
 
-	  state->resolved_gravity = pango_gravity_get_for_script (state->script,
-								  gravity,
-								  gravity_hint);
+	  state->resolved_gravity = pango_gravity_get_for_script_and_width (state->script,
+									    state->width_iter.wide,
+									    gravity,
+									    gravity_hint);
 	}
 
       if (old_gravity != state->resolved_gravity)
@@ -1407,7 +1468,7 @@ itemize_state_finish (ItemizeState *state)
   g_free (state->embedding_levels);
   if (state->free_attr_iter)
     pango_attr_iterator_destroy (state->attr_iter);
-  pango_script_iter_free (state->script_iter);
+  _pango_script_iter_fini (&state->script_iter);
   pango_font_description_free (state->font_desc);
 
   itemize_state_reset_shape_engines (state);
@@ -1574,12 +1635,15 @@ get_base_metrics (PangoFontset *fontset)
 static void
 update_metrics_from_items (PangoFontMetrics *metrics,
 			   PangoLanguage    *language,
+			   const char       *text,
 			   GList            *items)
 
 {
   GHashTable *fonts_seen = g_hash_table_new (NULL, NULL);
-  int count = 0;
+  PangoGlyphString *glyphs = pango_glyph_string_new ();
   GList *l;
+
+  metrics->approximate_char_width = 0;
 
   for (l = items; l; l = l->next)
     {
@@ -1594,29 +1658,17 @@ update_metrics_from_items (PangoFontMetrics *metrics,
 	  /* metrics will already be initialized from the first font in the fontset */
 	  metrics->ascent = MAX (metrics->ascent, raw_metrics->ascent);
 	  metrics->descent = MAX (metrics->descent, raw_metrics->descent);
-
-	  if (count == 0)
-	    {
-	      metrics->approximate_char_width = raw_metrics->approximate_char_width;
-	      metrics->approximate_digit_width = raw_metrics->approximate_digit_width;
-	    }
-	  else
-	    {
-	      metrics->approximate_char_width += raw_metrics->approximate_char_width;
-	      metrics->approximate_digit_width += raw_metrics->approximate_digit_width;
-	    }
-	  count++;
 	  pango_font_metrics_unref (raw_metrics);
 	}
+
+      pango_shape (text + item->offset, item->length, &item->analysis, glyphs);
+      metrics->approximate_char_width += pango_glyph_string_get_width (glyphs);
     }
 
+  pango_glyph_string_free (glyphs);
   g_hash_table_destroy (fonts_seen);
 
-  if (count)
-    {
-      metrics->approximate_char_width /= count;
-      metrics->approximate_digit_width /= count;
-    }
+  metrics->approximate_char_width /= pango_utf8_strwidth (text);
 }
 
 /**
@@ -1670,7 +1722,7 @@ pango_context_get_metrics (PangoContext                 *context,
   sample_str = pango_language_get_sample_string (language);
   items = itemize_with_font (context, sample_str, 0, strlen (sample_str), desc);
 
-  update_metrics_from_items (metrics, language, items);
+  update_metrics_from_items (metrics, language, sample_str, items);
 
   g_list_foreach (items, (GFunc)pango_item_free, NULL);
   g_list_free (items);

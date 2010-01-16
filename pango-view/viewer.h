@@ -91,9 +91,9 @@ struct _PangoViewer {
 		int      height,
 		int      stride);
 
+  GOptionGroup * (*get_option_group) (const PangoViewer *klass);
 };
 
-extern const PangoViewer *fallback_viewer;
 extern const PangoViewer *viewers[];
 
 #endif /* VIEWER_H */

@@ -34,6 +34,7 @@ IGNORE_HFILES=			\
 	pango-glyph-item-private.h	\
 	pango-layout-private.h	\
 	pango-script-table.h	\
+	pango-script-private.h	\
 	pangofc-private.h	\
 	pangoft2-private.h	\
 	pangowin32-private.h	\
@@ -135,7 +136,10 @@ EXTRA_DIST +=				\
 	$(man_MANS)
 
 # force doc rebulid after configure
-dist-hook-local: dist-local-check-mans-enabled dist-local-check-no-cross-references maintainer-clean-local all-local
+dist-hook-local: dist-local-check-mans-enabled dist-local-check-no-cross-references pango-docs-clean all-local
+
+pango-docs-clean: clean
+	cd $(srcdir) && rm -rf xml html
 
 #
 # Require gtk-doc when making dist
@@ -150,5 +154,9 @@ endif
 
 .PHONY: dist-local-check-no-cross-references
 
+if ENABLE_GTK_DOC
 TESTS = check.docs
 TESTS_ENVIRONMENT = srcdir="$(srcdir)" top_srcdir="$(top_srcdir)" MAKE="$(MAKE) $(AM_MAKEFLAGS)" DOC_MODULE="$(DOC_MODULE)" REPORT_FILES="$(REPORT_FILES)"
+endif
+
+-include $(top_srcdir)/git.mk

@@ -107,7 +107,7 @@ fallback_engine_shape (PangoEngineShape *engine G_GNUC_UNUSED,
   int cluster = 0;
   int i;
 
-  n_chars = text ? g_utf8_strlen (text, length) : 0;
+  n_chars = text ? pango_utf8_strlen (text, length) : 0;
 
   pango_glyph_string_set_size (glyphs, n_chars);
 
@@ -140,6 +140,9 @@ fallback_engine_shape (PangoEngineShape *engine G_GNUC_UNUSED,
 
       p = g_utf8_next_char (p);
     }
+
+  if (analysis->level & 1)
+    pango_glyph_string_reverse_range (glyphs, 0, glyphs->num_glyphs);
 }
 
 static PangoCoverageLevel
