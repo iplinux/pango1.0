@@ -7,10 +7,11 @@ XCS-Cross-Build-Depends: libfreetype6-dev, libglib2.0-dev, libfontconfig1-dev, l
 XCS-Cross-Host-Build-Depends: debhelper, cdbs, cdbs-embedded, autoconf, libtool, automake, autotools-dev, pkg-config, libglib2.0-dev
 Standards-Version: 3.6.1
 
-Package: libpango1.0
+Package: libpango1.0-0
 Section: gui
 Architecture: any
 Depends: ${shlibs:Depends}
+Conflicts: libpango1.0 (<= 1.23.0-20090316-1+b1)
 Description: Layout and rendering of internationalized text
  Pango is a library for layout and rendering of text, with an emphasis
  on internationalization. Pango can be used anywhere that text layout is
@@ -30,9 +31,7 @@ Description: Layout and rendering of internationalized text
 Package: libpango1.0-dev
 Section: libdevel
 Architecture: any
-Depends: libpango1.0 (= ${Source-Version}), libglib2.0-dev, libfreetype6-dev, libfontconfig1-dev
-Replaces: libpango-dev
-Conflicts: libpango-dev
+Depends: libpango1.0-0 (= ${binary:Version}), libglib2.0-dev, libfreetype6-dev, libfontconfig1-dev
 Description: Development files for the Pango
  Pango is a library for layout and rendering of text, with an emphasis
  on internationalization. Pango can be used anywhere that text layout is
@@ -54,7 +53,7 @@ Package: libpango1.0-dbg
 Section: debug
 Priority: extra
 Architecture: any
-Depends: libpango1.0 (= ${Source-Version})
+Depends: libpango1.0-0 (= ${Source-Version})
 Description: The Pango library and debugging symbols
  Pango is a library for layout and rendering of text, with an emphasis
  on internationalization. Pango can be used anywhere that text layout is

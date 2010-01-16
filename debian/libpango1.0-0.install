@@ -1,0 +1,3 @@
+debian/tmp/usr/lib/lib*.so.*
+debian/tmp/usr/lib/pango/*/modules/*.so
+debian/libpango1.0-0.modules usr/lib/pango/1.6.0/module-files.d
