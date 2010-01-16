@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Alexander Kerner <lunohod@openinkpot.org>
 Build-Depends: debhelper, cdbs, libfreetype6-dev, libglib2.0-dev (>= 2.17.3), pkg-config, libfontconfig1-dev, libexpat1-dev, autotools-dev, autoconf, libtool, automake
 XCS-Cross-Build-Depends: libfreetype6-dev, libglib2.0-dev (>= 2.17.3), libfontconfig1-dev, libexpat1-dev
-XCS-Cross-Host-Build-Depends: debhelper, cdbs, cdbs-embedded, autoconf, libtool, automake, autotools-dev, pkg-config, libglib2.0-dev
+XCS-Cross-Host-Build-Depends: debhelper, cdbs, cdbs-embedded, autoconf, libtool, automake, autotools-dev, pkg-config, libglib2.0-dev (>= 2.17.3)
 Standards-Version: 3.6.1
 
 Package: libpango1.0-0
